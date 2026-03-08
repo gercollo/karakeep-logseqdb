@@ -114,6 +114,11 @@ export interface PluginSettings {
   includeArchived: boolean
   includeFavourited: boolean
   usePageReferences: boolean
+  bookmarkTagName: string
+  urlPropertyName: string
+  datePropertyName: string
+  urlPropertyIdentOverride: string
+  datePropertyIdentOverride: string
   syncedIds: string[] // Hidden: stores IDs of already synced bookmarks
   autoSyncEnabled: boolean // Enable automatic sync
   autoSyncInterval: number // Auto-sync interval in minutes
@@ -125,15 +130,20 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   includeArchived: false,
   includeFavourited: false,
   usePageReferences: true,
+  bookmarkTagName: 'Bookmarks',
+  urlPropertyName: 'url',
+  datePropertyName: 'date',
+  urlPropertyIdentOverride: '',
+  datePropertyIdentOverride: '',
   syncedIds: [],
   autoSyncEnabled: false,
   autoSyncInterval: 60, // Default: 60 minutes
 }
 
 // Property name constants (without namespace prefix)
-export const URL_PROPERTY = 'url'
-export const DATE_PROPERTY = 'date'
-export const BOOKMARKS_TAG = 'Bookmarks'
+export const URL_PROPERTY = DEFAULT_SETTINGS.urlPropertyName
+export const DATE_PROPERTY = DEFAULT_SETTINGS.datePropertyName
+export const BOOKMARKS_TAG = DEFAULT_SETTINGS.bookmarkTagName
 
 // Block structure for insertion
 export interface BookmarkBlock {

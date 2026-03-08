@@ -15,7 +15,7 @@ import { initializeSchema, ensureBookmarksPage, discoverPropertyIdent } from './
 import { createAPIClient } from './api/karakeep'
 import { buildBookmarkBlocks } from './logic'
 import type { BookmarkBlock } from './types'
-import { BOOKMARKS_TAG, URL_PROPERTY, DATE_PROPERTY } from './types'
+import { URL_PROPERTY, DATE_PROPERTY, DEFAULT_SETTINGS } from './types'
 
 // ============================================================
 // Auto Sync State
@@ -96,13 +96,6 @@ function startAutoSync(intervalMinutes: number): void {
 
   console.log(`[Karakeep] Starting auto-sync: every ${intervalMinutes} minutes (${intervalMs}ms)`)
 
-  // Set initial sync with a small delay to allow plugin to fully load
-  console.log('[Karakeep] Scheduling first auto-sync in 5 seconds...')
-  setTimeout(() => {
-    console.log('[Karakeep] Triggering first auto-sync now!')
-    performAutoSync()
-  }, 5000) // 5 seconds after plugin load
-
   // Set up recurring sync that reschedules after each completion
   const scheduleNext = () => {
     autoSyncTimer = setTimeout(() => {
@@ -117,6 +110,9 @@ function startAutoSync(intervalMinutes: number): void {
   }
 
   // Start the recurring schedule
+  console.log(
+    `[Karakeep] First auto-sync will run in ${Math.max(intervalMinutes, 1)} minute(s). Use slash command for immediate first sync.`
+  )
   scheduleNext()
 }
 
@@ -159,53 +155,71 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
   const msgKey = await logseq.UI.showMsg(`Inserting ${blocks.length} bookmarks...`)
 
   try {
+    const settings = getSettings()
+    const tagName = settings.bookmarkTagName || DEFAULT_SETTINGS.bookmarkTagName
+    const pageName = tagName
+    const urlPropertyName = settings.urlPropertyName || URL_PROPERTY
+    const datePropertyName = settings.datePropertyName || DATE_PROPERTY
+    const urlPropertyIdentOverride = settings.urlPropertyIdentOverride?.trim()
+    const datePropertyIdentOverride = settings.datePropertyIdentOverride?.trim()
+
     console.log('[Karakeep] ===== INSERTING BOOKMARKS =====')
     console.log('[Karakeep] Number of blocks:', blocks.length)
 
     // Ensure Bookmarks page exists
-    await ensureBookmarksPage()
+    await ensureBookmarksPage(pageName)
 
-    // Always use the Bookmarks page
-    let page = await logseq.Editor.getPage('Bookmarks')
+    // Always use the configured bookmarks page
+    let page = await logseq.Editor.getPage(pageName)
 
     if (!page) {
-      console.log('[Karakeep] Creating Bookmarks page...')
-      await logseq.Editor.createPage('Bookmarks')
-      page = await logseq.Editor.getPage('Bookmarks')
+      console.log(`[Karakeep] Creating ${pageName} page...`)
+      await logseq.Editor.createPage(pageName)
+      page = await logseq.Editor.getPage(pageName)
     }
 
     if (!page) {
-      throw new Error('Failed to get or create Bookmarks page')
+      throw new Error(`Failed to get or create ${pageName} page`)
     }
 
     console.log('[Karakeep] Bookmarks page:', page.uuid)
     console.log('[Karakeep] Bookmarks page ID:', page.id)
 
     // Get or create the bookmarks tag for organization
-    let tag = await logseq.Editor.getTag(BOOKMARKS_TAG)
+    let tag = await logseq.Editor.getTag(tagName)
     if (!tag) {
-      console.log(`[Karakeep] Creating #${BOOKMARKS_TAG} tag...`)
-      tag = await logseq.Editor.createTag(BOOKMARKS_TAG)
+      console.log(`[Karakeep] Creating #${tagName} tag...`)
+      tag = await logseq.Editor.createTag(tagName)
     }
 
     if (!tag) {
-      console.warn(`[Karakeep] Could not create #${BOOKMARKS_TAG} tag, continuing without tagging`)
+      console.warn(`[Karakeep] Could not create #${tagName} tag, continuing without tagging`)
       await logseq.UI.closeMsg(msgKey)
-      await logseq.UI.showMsg(`Could not create #${BOOKMARKS_TAG} tag`, 'error')
+      await logseq.UI.showMsg(`Could not create #${tagName} tag`, 'error')
       return
     }
 
     console.log('[Karakeep] Tag:', `${tag.uuid} (ID: ${tag.id})`)
 
     // Discover property idents dynamically - suffixes vary per database
-    const datePropertyIdent = await discoverPropertyIdent(tag.uuid, DATE_PROPERTY)
-    const urlPropertyIdent = await discoverPropertyIdent(tag.uuid, URL_PROPERTY)
+    const datePropertyIdent =
+      datePropertyIdentOverride || (await discoverPropertyIdent(tag.uuid, datePropertyName))
+    const urlPropertyIdent =
+      urlPropertyIdentOverride || (await discoverPropertyIdent(tag.uuid, urlPropertyName))
 
-    if (!datePropertyIdent || !urlPropertyIdent) {
-      console.error('[Karakeep] Failed to discover property idents')
-      await logseq.UI.showMsg('Failed to initialize bookmark properties', 'error')
-      return
+    // In clean/new graphs, ident discovery can fail right after schema creation.
+    // Fallback to plain property names to keep sync working.
+    const usePropertyFallback = !datePropertyIdent || !urlPropertyIdent
+    if (usePropertyFallback) {
+      console.warn('[Karakeep] Failed to discover property idents, using fallback property keys')
+      await logseq.UI.showMsg(
+        'Using fallback property mode (properties will still be synced)',
+        'warning'
+      )
     }
+
+    const datePropertyKey = datePropertyIdent || datePropertyName
+    const urlPropertyKey = urlPropertyIdent || urlPropertyName
 
     console.log('[Karakeep] Discovered property idents:', {
       date: datePropertyIdent,
@@ -219,44 +233,49 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
     const skippedDuplicates: string[] = []
 
     // Fast deduplication using syncedIds from settings (O(1) Set lookup)
-    let syncedIds = new Set(getSettings().syncedIds || [])
+    let syncedIds = new Set(settings.syncedIds || [])
     console.log('[Karakeep] Existing synced IDs:', syncedIds.size)
 
     // Fallback: If syncedIds is empty, perform one-time URL query to backfill
     // This handles existing bookmarks from before bookmarkId tracking
-    if (syncedIds.size === 0) {
+    if (syncedIds.size === 0 && urlPropertyIdent) {
       console.log('[Karakeep] No synced IDs found, performing one-time backfill...')
+      try {
+        const existingUrlsQuery = await logseq.DB.datascriptQuery(
+          `[:find ?url
+            :where
+            [?b :block/tags ?t]
+            [?t :block/name "${tagName.toLowerCase()}"]
+            [?b ${urlPropertyIdent} ?urlEntity]
+            [?urlEntity :block/title ?url]]`
+        )
 
-      const existingUrlsQuery = await logseq.DB.datascriptQuery(
-        `[:find ?url
-          :where
-          [?b :block/tags ?t]
-          [?t :block/name "${BOOKMARKS_TAG.toLowerCase()}"]
-          [?b ${urlPropertyIdent} ?urlEntity]
-          [?urlEntity :block/title ?url]]`
-      )
+        const existingUrls = new Set(existingUrlsQuery.map((row: any[]) => row[0]))
+        console.log('[Karakeep] Backfill: Found', existingUrls.size, 'existing bookmarks by URL')
 
-      const existingUrls = new Set(existingUrlsQuery.map((row: any[]) => row[0]))
-      console.log('[Karakeep] Backfill: Found', existingUrls.size, 'existing bookmarks by URL')
-
-      // Build URL -> bookmarkId mapping from incoming blocks
-      const urlToBookmarkId = new Map<string, string>()
-      for (const block of blocks) {
-        const url = block.properties.url
-        if (url) {
-          urlToBookmarkId.set(url.trim(), (block as any).bookmarkId)
+        // Build URL -> bookmarkId mapping from incoming blocks
+        const urlToBookmarkId = new Map<string, string>()
+        for (const block of blocks) {
+          const url = block.properties.url
+          if (url) {
+            urlToBookmarkId.set(url.trim(), (block as any).bookmarkId)
+          }
         }
-      }
 
-      // Populate syncedIds from existing URLs
-      for (const url of existingUrls) {
-        const bookmarkId = urlToBookmarkId.get((url as string).trim())
-        if (bookmarkId) {
-          syncedIds.add(bookmarkId)
+        // Populate syncedIds from existing URLs
+        for (const url of existingUrls) {
+          const bookmarkId = urlToBookmarkId.get((url as string).trim())
+          if (bookmarkId) {
+            syncedIds.add(bookmarkId)
+          }
         }
-      }
 
-      console.log('[Karakeep] Backfill: Populated syncedIds with', syncedIds.size, 'IDs')
+        console.log('[Karakeep] Backfill: Populated syncedIds with', syncedIds.size, 'IDs')
+      } catch (err) {
+        console.warn('[Karakeep] Backfill query failed, continuing without backfill:', err)
+      }
+    } else if (syncedIds.size === 0) {
+      console.log('[Karakeep] Backfill skipped: URL property ident unavailable in fallback mode')
     }
 
     // Filter out duplicates using bookmarkId (O(n) instead of O(n*m))
@@ -311,7 +330,7 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
 
           // Pre-fetch or create journal page for date property
           let journalPageId: number | undefined
-          if (dateString && datePropertyIdent) {
+          if (dateString) {
             try {
               let journalPage = await logseq.Editor.getPage(dateString)
               if (!journalPage) {
@@ -326,11 +345,13 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
 
           // Build properties object for batch setting
           const blockProperties: Record<string, any> = {}
-          if (journalPageId && datePropertyIdent) {
-            blockProperties[datePropertyIdent] = journalPageId
+          if (journalPageId) {
+            blockProperties[datePropertyKey] = usePropertyFallback
+              ? `[[${dateString}]]`
+              : journalPageId
           }
-          if (url && urlPropertyIdent) {
-            blockProperties[urlPropertyIdent] = url
+          if (url) {
+            blockProperties[urlPropertyKey] = url
           }
 
           // Create block with properties in one operation (reduces 4 calls to 2)
@@ -482,9 +503,16 @@ async function main() {
     console.log('[Karakeep] ✓ Settings registered')
 
     console.log('[Karakeep] Step 2: Initializing schema...')
+    const settings = getSettings()
     // 2. Initialize schema (properties and tag)
-    await initializeSchema()
-    await ensureBookmarksPage()
+    await initializeSchema({
+      tagName: settings.bookmarkTagName,
+      urlPropertyName: settings.urlPropertyName,
+      datePropertyName: settings.datePropertyName,
+      urlPropertyIdentOverride: settings.urlPropertyIdentOverride,
+      datePropertyIdentOverride: settings.datePropertyIdentOverride,
+    })
+    await ensureBookmarksPage(settings.bookmarkTagName)
     console.log('[Karakeep] ✓ Schema initialized')
 
     console.log('[Karakeep] Step 3: Registering slash commands...')
