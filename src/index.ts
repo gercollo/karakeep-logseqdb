@@ -201,11 +201,19 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
     const datePropertyIdent = await discoverPropertyIdent(tag.uuid, DATE_PROPERTY)
     const urlPropertyIdent = await discoverPropertyIdent(tag.uuid, URL_PROPERTY)
 
-    if (!datePropertyIdent || !urlPropertyIdent) {
-      console.error('[Karakeep] Failed to discover property idents')
-      await logseq.UI.showMsg('Failed to initialize bookmark properties', 'error')
-      return
+    // In clean/new graphs, ident discovery can fail right after schema creation.
+    // Fallback to plain property names to keep sync working.
+    const usePropertyFallback = !datePropertyIdent || !urlPropertyIdent
+    if (usePropertyFallback) {
+      console.warn('[Karakeep] Failed to discover property idents, using fallback property keys')
+      await logseq.UI.showMsg(
+        'Using fallback property mode (properties will still be synced)',
+        'warning'
+      )
     }
+
+    const datePropertyKey = datePropertyIdent || DATE_PROPERTY
+    const urlPropertyKey = urlPropertyIdent || URL_PROPERTY
 
     console.log('[Karakeep] Discovered property idents:', {
       date: datePropertyIdent,
@@ -224,7 +232,7 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
 
     // Fallback: If syncedIds is empty, perform one-time URL query to backfill
     // This handles existing bookmarks from before bookmarkId tracking
-    if (syncedIds.size === 0) {
+    if (syncedIds.size === 0 && urlPropertyIdent) {
       console.log('[Karakeep] No synced IDs found, performing one-time backfill...')
 
       const existingUrlsQuery = await logseq.DB.datascriptQuery(
@@ -257,6 +265,8 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
       }
 
       console.log('[Karakeep] Backfill: Populated syncedIds with', syncedIds.size, 'IDs')
+    } else if (syncedIds.size === 0) {
+      console.log('[Karakeep] Backfill skipped: URL property ident unavailable in fallback mode')
     }
 
     // Filter out duplicates using bookmarkId (O(n) instead of O(n*m))
@@ -311,7 +321,7 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
 
           // Pre-fetch or create journal page for date property
           let journalPageId: number | undefined
-          if (dateString && datePropertyIdent) {
+          if (dateString) {
             try {
               let journalPage = await logseq.Editor.getPage(dateString)
               if (!journalPage) {
@@ -326,11 +336,11 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
 
           // Build properties object for batch setting
           const blockProperties: Record<string, any> = {}
-          if (journalPageId && datePropertyIdent) {
-            blockProperties[datePropertyIdent] = journalPageId
+          if (journalPageId) {
+            blockProperties[datePropertyKey] = usePropertyFallback ? dateString : journalPageId
           }
-          if (url && urlPropertyIdent) {
-            blockProperties[urlPropertyIdent] = url
+          if (url) {
+            blockProperties[urlPropertyKey] = url
           }
 
           // Create block with properties in one operation (reduces 4 calls to 2)
