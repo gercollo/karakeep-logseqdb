@@ -337,7 +337,9 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
           // Build properties object for batch setting
           const blockProperties: Record<string, any> = {}
           if (journalPageId) {
-            blockProperties[datePropertyKey] = usePropertyFallback ? dateString : journalPageId
+            blockProperties[datePropertyKey] = usePropertyFallback
+              ? `[[${dateString}]]`
+              : journalPageId
           }
           if (url) {
             blockProperties[urlPropertyKey] = url
