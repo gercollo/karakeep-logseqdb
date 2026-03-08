@@ -1,0 +1,45 @@
+{
+  "name": "logseq-karakeep-plugin",
+  "author": "gisele",
+  "description": "Sync bookmarks from Karakeep to Logseq.",
+  "license": "MIT",
+  "logseq": {
+    "id": "logseq-karakeep-plugin",
+    "title": "logseq-karakeep-plugin",
+    "icon": "./icon.svg",
+    "main": "dist/index.html"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:plugin": "tsc && vite build",
+    "lint": "eslint src",
+    "format": "prettier --write src",
+    "typecheck": "tsc --noEmit",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "src/**/*.ts": [
+      "eslint --fix",
+      "prettier --write"
+    ]
+  },
+  "dependencies": {
+    "@logseq/libs": "^0.2.9",
+    "date-fns": "^4.1.0",
+    "logseq-dateutils": "^2.1.2",
+    "wretch": "^3.0.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.9.1",
+    "@types/node": "^22.5.4",
+    "eslint": "^9.9.1",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7",
+    "prettier": "^3.8.1",
+    "typescript": "^5.5.4",
+    "typescript-eslint": "^8.56.1",
+    "vite": "^5.4.3",
+    "vite-plugin-logseq": "^1.1.2"
+  }
+}

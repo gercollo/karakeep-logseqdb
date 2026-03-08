@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# Environment variables
+.env
+.env.*
+
+# Local temp notes (keep locally only)
+FULL_EXTENSION_PROMPT.md
+PROMPT_OVERVIEW.md
+REDESIGN_PLAN.md
+discord-question.md
+BATCH_BLOCK_API_RESEARCH.md
+OPTIMIZATION_SUMMARY.md
+
+# Local notes
+notes/
