@@ -96,13 +96,6 @@ function startAutoSync(intervalMinutes: number): void {
 
   console.log(`[Karakeep] Starting auto-sync: every ${intervalMinutes} minutes (${intervalMs}ms)`)
 
-  // Set initial sync with a small delay to allow plugin to fully load
-  console.log('[Karakeep] Scheduling first auto-sync in 5 seconds...')
-  setTimeout(() => {
-    console.log('[Karakeep] Triggering first auto-sync now!')
-    performAutoSync()
-  }, 5000) // 5 seconds after plugin load
-
   // Set up recurring sync that reschedules after each completion
   const scheduleNext = () => {
     autoSyncTimer = setTimeout(() => {
@@ -117,6 +110,9 @@ function startAutoSync(intervalMinutes: number): void {
   }
 
   // Start the recurring schedule
+  console.log(
+    `[Karakeep] First auto-sync will run in ${Math.max(intervalMinutes, 1)} minute(s). Use slash command for immediate first sync.`
+  )
   scheduleNext()
 }
 
