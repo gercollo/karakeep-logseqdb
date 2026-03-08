@@ -43,6 +43,8 @@ interface SchemaConfig {
   tagName: string
   urlPropertyName: string
   datePropertyName: string
+  urlPropertyIdentOverride: string
+  datePropertyIdentOverride: string
 }
 
 /**
@@ -55,6 +57,8 @@ export async function initializeBookmarksTag(config?: Partial<SchemaConfig>): Pr
     const tagName = config?.tagName || BOOKMARKS_TAG
     const urlPropertyName = config?.urlPropertyName || URL_PROPERTY
     const datePropertyName = config?.datePropertyName || DATE_PROPERTY
+    const urlPropertyIdentOverride = config?.urlPropertyIdentOverride?.trim()
+    const datePropertyIdentOverride = config?.datePropertyIdentOverride?.trim()
 
     console.log('[Karakeep] ===== INITIALIZING BOOKMARKS TAG SCHEMA =====')
 
@@ -86,12 +90,16 @@ export async function initializeBookmarksTag(config?: Partial<SchemaConfig>): Pr
     console.log('[Karakeep] Existing properties:', existingProps)
 
     // Check if properties already exist
-    const hasDateProp = Object.values(existingProps).some((p: any) =>
+    const hasDatePropByName = Object.values(existingProps).some((p: any) =>
       identMatchesProperty(p?.[':db/ident'], datePropertyName)
     )
-    const hasUrlProp = Object.values(existingProps).some((p: any) =>
+    const hasUrlPropByName = Object.values(existingProps).some((p: any) =>
       identMatchesProperty(p?.[':db/ident'], urlPropertyName)
     )
+
+    // If user provides explicit property ident override, trust it and skip property auto-creation.
+    const hasDateProp = !!datePropertyIdentOverride || hasDatePropByName
+    const hasUrlProp = !!urlPropertyIdentOverride || hasUrlPropByName
 
     console.log('[Karakeep] hasDateProp:', hasDateProp, 'hasUrlProp:', hasUrlProp)
 

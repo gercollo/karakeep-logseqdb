@@ -509,6 +509,8 @@ async function main() {
       tagName: settings.bookmarkTagName,
       urlPropertyName: settings.urlPropertyName,
       datePropertyName: settings.datePropertyName,
+      urlPropertyIdentOverride: settings.urlPropertyIdentOverride,
+      datePropertyIdentOverride: settings.datePropertyIdentOverride,
     })
     await ensureBookmarksPage(settings.bookmarkTagName)
     console.log('[Karakeep] ✓ Schema initialized')
