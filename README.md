@@ -2,6 +2,8 @@
 
 Sync bookmarks from [Karakeep](https://karakeep.app) to Logseq.
 
+This plugin supports **Logseq DB only**.
+
 ## Features
 
 - **One-way sync**: Bookmarks from Karakeep → Logseq
@@ -17,14 +19,16 @@ Sync bookmarks from [Karakeep](https://karakeep.app) to Logseq.
    - Go to your Karakeep instance → Settings → API Tokens
    - Create a new token and paste it in the plugin settings
 4. Optionally configure your self-hosted instance URL
-5. Create a "Bookmarks" page in your graph (if it doesn't exist)
+5. Optionally customize:
+   - Bookmark tag name
+   - URL/date property names
+   - URL/date property ident overrides (advanced)
+6. Run the first sync manually via slash command.
 
 ## Usage
 
 Use the slash commands:
 - `/Karakeep: Retrieve Bookmarks` - Sync all bookmarks
-- `/Karakeep: Retrieve Recent Bookmarks` - Sync recent bookmarks (limit 100)
-- `/Karakeep: Retrieve Favourited Bookmarks` - Sync only favourited
 
 ## Bookmark Format
 
@@ -46,4 +50,12 @@ Jan 30, 2026
 | Include Archived | Sync archived bookmarks | `false` |
 | Only Favourited | Only sync favourited | `false` |
 | Use Page References | Use `[[Title]]` format | `true` |
-| Store Karakeep ID | Store bookmark ID | `true` |
+| Bookmark Tag Name | Tag/page used for bookmark entries | `Bookmarks` |
+| URL Property Name | Property name for URL values | `url` |
+| Date Property Name | Property name for date values | `date` |
+| URL Property Ident Override | Full property ident override (advanced) | empty |
+| Date Property Ident Override | Full property ident override (advanced) | empty |
+
+## Release Install
+
+Install from GitHub release `plugin.zip` (not source zip), or use the CI `plugin-build` artifact.
