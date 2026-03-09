@@ -24,19 +24,9 @@ This extension works with **Logseq DB only**.
 5. Optionally set bookmark tag name, URL property name, date property name, or URL/date property ident overrides.
 6. Run the first sync manually with the slash command `/Karakeep: Retrieve Bookmarks`.
 
-## Recommendation
-
-Test with:
-
-- a small bookmark collection
-- a fresh or disposable Logseq DB graph
-- manual sync first, before enabling auto-sync
-
 ## Install
 
 Install from the GitHub release `plugin.zip` or from the CI `plugin-build` artifact.
-
-Do not use the repository source zip as the plugin package.
 
 ## Disclaimer
 
