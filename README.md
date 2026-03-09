@@ -20,7 +20,7 @@ This extension works with **Logseq DB only**.
 1. Install the plugin in Logseq DB.
 2. Open plugin settings.
 3. Add your Karakeep API token.
-4. Optionally set your Karakeep instance URL if you are self-hosting.
+4. Set your Karakeep instance URL.
 5. Optionally set bookmark tag name, URL property name, date property name, or URL/date property ident overrides.
 6. Run the first sync manually with the slash command `/Karakeep: Retrieve Bookmarks`.
 
