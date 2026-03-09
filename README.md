@@ -1,49 +1,45 @@
 # Logseq Karakeep Plugin
 
-Sync bookmarks from [Karakeep](https://karakeep.app) to Logseq.
+Sync bookmarks from [Karakeep](https://karakeep.app) into Logseq DB.
 
-## Features
+This extension is early stage.
 
-- **One-way sync**: Bookmarks from Karakeep → Logseq
-- **Date-organized**: Bookmarks appear on daily journal pages under a "Bookmarks" section
-- **URL storage**: Bookmarks stored as page references or markdown links
-- **Filtering**: Sync all, favourited, or archived bookmarks
+Use it first with a small Karakeep collection and a test graph before using it on a larger graph or your main data.
+
+This extension works with **Logseq DB only**.
+
+## What It Does
+
+- Imports bookmarks from Karakeep into Logseq
+- Stores bookmarks under a configurable bookmarks tag/page
+- Supports configurable `url` and `date` properties
+- Supports manual sync and optional auto-sync
 
 ## Setup
 
-1. Install the plugin in Logseq
-2. Go to Plugin Settings
-3. Configure your Karakeep API token:
-   - Go to your Karakeep instance → Settings → API Tokens
-   - Create a new token and paste it in the plugin settings
-4. Optionally configure your self-hosted instance URL
-5. Create a "Bookmarks" page in your graph (if it doesn't exist)
+1. Install the plugin in Logseq DB.
+2. Open plugin settings.
+3. Add your Karakeep API token.
+4. Set your Karakeep instance URL.
+5. Optionally set bookmark tag name, URL property name, date property name, or URL/date property ident overrides.
+6. Run the first sync manually with the slash command `/Karakeep: Retrieve Bookmarks`.
 
-## Usage
+## Recommendation
 
-Use the slash commands:
-- `/Karakeep: Retrieve Bookmarks` - Sync all bookmarks
-- `/Karakeep: Retrieve Recent Bookmarks` - Sync recent bookmarks (limit 100)
-- `/Karakeep: Retrieve Favourited Bookmarks` - Sync only favourited
+Test with:
 
-## Bookmark Format
+- a small bookmark collection
+- a fresh or disposable Logseq DB graph
+- manual sync first, before enabling auto-sync
 
-Bookmarks are inserted under a "Bookmarks" section on daily journal pages:
+## Install
 
-```markdown
-Jan 30, 2026
-  Bookmarks
-    [[Bookmark Title]]
-    [[Another Bookmark]]
-```
+Install from the GitHub release `plugin.zip` or from the CI `plugin-build` artifact.
 
-## Settings
+Do not use the repository source zip as the plugin package.
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| Karakeep Instance URL | Your Karakeep URL | `https://try.karakeep.app` |
-| API Token | Your API token | - |
-| Include Archived | Sync archived bookmarks | `false` |
-| Only Favourited | Only sync favourited | `false` |
-| Use Page References | Use `[[Title]]` format | `true` |
-| Store Karakeep ID | Store bookmark ID | `true` |
+## Disclaimer
+
+Karakeep and related names, branding, and trademarks belong to their respective owner or original creator.
+
+This project is an independent community plugin and is not affiliated with or endorsed by Karakeep.
