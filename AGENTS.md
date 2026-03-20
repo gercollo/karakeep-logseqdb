@@ -8,33 +8,37 @@
 - NEVER use `git restore` or `git checkout` to discard changes. Other agents may be working concurrently and their changes could be lost.
 - NEVER use `git commit -a`. Always stage specific files to avoid committing adjacent changes from other agents.
 
-## Current Plugin Invariants
-- The plugin now uses fixed managed properties only:
-  - `bookmark_url`
-  - `bookmark_date`
-- Do not reintroduce settings for property names or property ident overrides unless explicitly asked.
-- Keep only the retrieve command unless the user explicitly asks for more commands.
+## Project Overview
+- This is a Logseq DB-graph plugin that pulls bookmarks from Karakeep and materializes them as tagged Logseq blocks.
+- The stable user-facing model is intentionally narrow:
+  - one retrieve command
+  - one bookmark class/tag: `Bookmarks`
+  - two managed properties: `bookmark_url` and `bookmark_date`
+- The codebase is small. The main seams are:
+  - `src/index.ts` for orchestration, commands, sync flow, and insertion
+  - `src/schema.ts` for property/tag setup against Logseq DB APIs
+  - `src/settings.ts` for plugin settings
+  - `src/logic.ts` for bookmark-to-block transformation
+  - `src/api/` for Karakeep access
 
-## Bookmark Write Path
-- New bookmark insertion must happen in this order:
-  1. create the block
-  2. add the `Bookmarks` tag
-  3. write `bookmark_url`
-  4. write `bookmark_date`
-- Do not rely on `appendBlockInPage(..., { properties })` for bookmark properties in this graph. That created tagged blocks with empty properties.
+## Runtime Model
+- The main complexity is not HTTP or transformation logic. It is Logseq DB behavior.
+- Treat block creation, tagging, and property writes as separate operations. Logseq DB graphs are sensitive to ordering and property typing.
+- Existing graph data may be heterogeneous because earlier iterations created multiple property variants. Avoid expanding that surface area again unless explicitly required.
+- Dedupe is stateful. It relies on both persisted `syncedIds` and graph backfill against managed bookmark properties.
 
-## Property Rules
-- `bookmark_url` must be a real Logseq `url` property.
-- `bookmark_date` must be a real Logseq `date` property.
-- For typed date writes, use the journal page entity id/ref. Do not write plain text date strings into the date property.
-- Avoid reviving old property paths such as `url`, `date`, `karakeep_*`, `test124_*`, or `_test_plugin`.
+## Development Environment
+- Validate code changes with:
+  - `npm run typecheck`
+  - `npm run build`
+- Prefer small, local changes. This project has already accumulated failures from broad “fix everything” passes that changed schema assumptions, dedupe behavior, and command surface area at the same time.
+- When touching sync behavior, reason in terms of three independent concerns:
+  - schema setup
+  - bookmark insertion
+  - dedupe/backfill
+- If a change affects Logseq property semantics, assume runtime verification matters more than static reasoning.
 
-## Tag/Class Rules
-- Attach properties to `Bookmarks` with `addTagProperty(...)`.
-- Do not try to write `class/properties` directly with `upsertBlockProperty(...)`.
-
-## Dedupe Rules
-- Dedupe/backfill must read from `bookmark_url`.
-- Property reads may come back as entities, not raw strings. Extract the actual URL string before comparing.
-- Multiple Karakeep bookmarks may share the same URL. Do not use a one-URL-to-one-bookmark-ID map for backfill.
-- Do not save `syncedIds` for failed inserts.
+## Engineering Constraints
+- Do not broaden the configurable surface without a strong reason. More property/config flexibility created most of the earlier regressions.
+- Favor a single supported path over compatibility branches unless the user explicitly asks for migration or legacy support.
+- Be careful with Logseq plugin APIs that appear generic. In this project, “can read” and “can safely write” have not been equivalent in practice.
