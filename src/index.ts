@@ -29,11 +29,19 @@ async function migrateManagedPropertySettings(): Promise<void> {
   const current = (logseq.settings || {}) as Record<string, unknown>
   const next: Record<string, string> = {}
 
-  if (current.urlPropertyName === 'url') {
+  if (
+    current.urlPropertyName === 'url' ||
+    current.urlPropertyName === 'karakeep_url' ||
+    current.urlPropertyName === 'test124_url'
+  ) {
     next.urlPropertyName = DEFAULT_SETTINGS.urlPropertyName
   }
 
-  if (current.datePropertyName === 'date') {
+  if (
+    current.datePropertyName === 'date' ||
+    current.datePropertyName === 'karakeep_date' ||
+    current.datePropertyName === 'test124_date'
+  ) {
     next.datePropertyName = DEFAULT_SETTINGS.datePropertyName
   }
 
@@ -71,13 +79,13 @@ async function getBookmarksPageBlocks(pageName: string): Promise<any[]> {
 
 async function migrateBookmarkBlock(
   blockUuid: string,
-  managedKeys: { url: string; date: string }
+  managedKeys: { url: string; date: string; urlWriteKey: string; dateWriteKey: string }
 ): Promise<{ migratedUrl: boolean; migratedDate: boolean }> {
   const props = await logseq.Editor.getBlockProperties(blockUuid)
   const legacyUrlKey = getLegacyPropertyKey(props, 'url')
   const legacyDateKey = getLegacyPropertyKey(props, 'date')
-  const migratedUrl = !!props?.[managedKeys.url]
-  const migratedDate = !!props?.[managedKeys.date]
+  const migratedUrl = !!(await logseq.Editor.getBlockProperty(blockUuid, managedKeys.urlWriteKey))
+  const migratedDate = !!(await logseq.Editor.getBlockProperty(blockUuid, managedKeys.dateWriteKey))
 
   if (legacyUrlKey && !migratedUrl) {
     const legacyUrl = await logseq.Editor.getBlockProperty(blockUuid, legacyUrlKey)
@@ -91,13 +99,22 @@ async function migrateBookmarkBlock(
   }
 
   if (legacyDateKey && !migratedDate) {
-    // Disabled until we have a verified valid journal-date payload for DB graphs.
+    const legacyDate = await logseq.Editor.getBlockProperty(blockUuid, legacyDateKey)
+    const dateEntityId =
+      legacyDate && typeof legacyDate === 'object' ? (legacyDate as any).id : null
+    if (typeof dateEntityId === 'number') {
+      await logseq.Editor.upsertBlockProperty(blockUuid, managedKeys.dateWriteKey, dateEntityId)
+    }
   }
 
   const updatedProps = await logseq.Editor.getBlockProperties(blockUuid)
   return {
-    migratedUrl: !!updatedProps?.[managedKeys.url],
-    migratedDate: !!updatedProps?.[managedKeys.date],
+    migratedUrl:
+      !!updatedProps?.[managedKeys.url] ||
+      !!(await logseq.Editor.getBlockProperty(blockUuid, managedKeys.urlWriteKey)),
+    migratedDate:
+      !!updatedProps?.[managedKeys.date] ||
+      !!(await logseq.Editor.getBlockProperty(blockUuid, managedKeys.dateWriteKey)),
   }
 }
 
@@ -495,11 +512,22 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
       for (const block of batch) {
         try {
           const url = block.properties.url
+          const dateString = (block as any).dateString
 
           // Build properties object for batch setting
           const blockProperties: Record<string, any> = {}
           if (url) {
             blockProperties[managedKeys.urlWriteKey] = url
+          }
+          if (dateString) {
+            let journalPage = await logseq.Editor.getPage(dateString)
+            if (!journalPage) {
+              await logseq.Editor.createPage(dateString, {}, { journal: true })
+              journalPage = await logseq.Editor.getPage(dateString)
+            }
+            if (journalPage?.id) {
+              blockProperties[managedKeys.dateWriteKey] = journalPage.id
+            }
           }
 
           const newBlock = await logseq.Editor.appendBlockInPage(page.uuid, block.content, {

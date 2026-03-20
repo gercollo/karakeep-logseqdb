@@ -74,7 +74,7 @@ async function resolvePropertyRef(
   return {
     ident: normalizeIdent(managedProperty?.['ident']) || getPluginPropertyIdent(propertyName),
     tagRef: managedProperty?.uuid || propertyName,
-    writeKey: managedProperty?.name || propertyName,
+    writeKey: String(managedProperty?.name || propertyName),
   }
 }
 
