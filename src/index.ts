@@ -457,20 +457,29 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
 
         console.log('[Karakeep] Backfill: Found', existingUrls.size, 'existing bookmarks by URL')
 
-        // Build URL -> bookmarkId mapping from incoming blocks
-        const urlToBookmarkId = new Map<string, string>()
+        // Build URL -> bookmarkIds mapping from incoming blocks
+        const urlToBookmarkIds = new Map<string, Set<string>>()
         for (const block of blocks) {
           const url = block.properties.url
           if (url) {
-            urlToBookmarkId.set(url.trim(), (block as any).bookmarkId)
+            const normalizedUrl = url.trim()
+            const bookmarkId = (block as any).bookmarkId
+            if (!urlToBookmarkIds.has(normalizedUrl)) {
+              urlToBookmarkIds.set(normalizedUrl, new Set<string>())
+            }
+            if (bookmarkId) {
+              urlToBookmarkIds.get(normalizedUrl)?.add(bookmarkId)
+            }
           }
         }
 
         // Populate syncedIds from existing URLs
         for (const url of existingUrls) {
-          const bookmarkId = urlToBookmarkId.get((url as string).trim())
-          if (bookmarkId) {
-            syncedIds.add(bookmarkId)
+          const bookmarkIds = urlToBookmarkIds.get((url as string).trim())
+          if (bookmarkIds) {
+            for (const bookmarkId of bookmarkIds) {
+              syncedIds.add(bookmarkId)
+            }
           }
         }
 
@@ -530,25 +539,7 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
           const url = block.properties.url
           const dateString = (block as any).dateString
 
-          // Build properties object for batch setting
-          const blockProperties: Record<string, any> = {}
-          if (url) {
-            blockProperties[managedKeys.urlWriteKey] = url
-          }
-          if (dateString) {
-            let journalPage = await logseq.Editor.getPage(dateString)
-            if (!journalPage) {
-              await logseq.Editor.createPage(dateString, {}, { journal: true })
-              journalPage = await logseq.Editor.getPage(dateString)
-            }
-            if (journalPage?.id) {
-              blockProperties[managedKeys.dateWriteKey] = journalPage.id
-            }
-          }
-
-          const newBlock = await logseq.Editor.appendBlockInPage(page.uuid, block.content, {
-            properties: blockProperties,
-          })
+          const newBlock = await logseq.Editor.appendBlockInPage(page.uuid, block.content)
 
           if (!newBlock) {
             console.warn('[Karakeep] Failed to create block for:', block.content)
@@ -560,6 +551,25 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
               await logseq.Editor.addBlockTag(newBlock.uuid, tag.uuid)
             } catch (err) {
               console.error('[Karakeep] Error tagging block:', err)
+            }
+          }
+
+          if (url) {
+            await logseq.Editor.upsertBlockProperty(newBlock.uuid, managedKeys.urlWriteKey, url)
+          }
+
+          if (dateString) {
+            let journalPage = await logseq.Editor.getPage(dateString)
+            if (!journalPage) {
+              await logseq.Editor.createPage(dateString, {}, { journal: true })
+              journalPage = await logseq.Editor.getPage(dateString)
+            }
+            if (journalPage?.id) {
+              await logseq.Editor.upsertBlockProperty(
+                newBlock.uuid,
+                managedKeys.dateWriteKey,
+                journalPage.id
+              )
             }
           }
 
