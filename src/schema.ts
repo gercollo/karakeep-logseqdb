@@ -37,6 +37,44 @@ interface SchemaConfig {
   datePropertyIdentOverride: string
 }
 
+interface ResolvedPropertyRef {
+  ident: string
+  tagRef: string
+}
+
+async function resolvePropertyRef(
+  propertyName: string,
+  identOverride?: string
+): Promise<ResolvedPropertyRef> {
+  const trimmedOverride = identOverride?.trim()
+  if (trimmedOverride) {
+    const result = await logseq.DB.datascriptQuery(
+      `[:find (pull ?p [:db/ident :block/uuid :block/name]) :where [?p :db/ident ${trimmedOverride}]]`
+    )
+    const property = result?.[0]?.[0]
+    const ident = normalizeIdent(property?.[':db/ident']) || trimmedOverride
+    const uuid = property?.[':block/uuid']
+    const name = property?.[':block/name']
+
+    return {
+      ident,
+      tagRef: uuid || name || trimmedOverride,
+    }
+  }
+
+  await logseq.Editor.upsertProperty(propertyName, {
+    type: propertyName.toLowerCase().includes('date') ? 'date' : 'url',
+    cardinality: 'one',
+  })
+
+  const managedProperty = await logseq.Editor.getProperty(propertyName)
+
+  return {
+    ident: normalizeIdent(managedProperty?.['ident']) || getPluginPropertyIdent(propertyName),
+    tagRef: managedProperty?.uuid || propertyName,
+  }
+}
+
 /**
  * Ensure Karakeep-managed properties exist and return their actual idents.
  */
@@ -49,34 +87,15 @@ export async function ensureManagedPropertyIdents(
     const urlPropertyIdentOverride = config?.urlPropertyIdentOverride?.trim()
     const datePropertyIdentOverride = config?.datePropertyIdentOverride?.trim()
 
-    if (urlPropertyIdentOverride && datePropertyIdentOverride) {
-      return {
-        url: urlPropertyIdentOverride,
-        date: datePropertyIdentOverride,
-      }
-    }
-
-    await logseq.Editor.upsertProperty(urlPropertyName, {
-      type: 'url',
-      cardinality: 'one',
-    })
-    await logseq.Editor.upsertProperty(datePropertyName, {
-      type: 'date',
-      cardinality: 'one',
-    })
-
-    const managedUrlProperty = await logseq.Editor.getProperty(urlPropertyName)
-    const managedDateProperty = await logseq.Editor.getProperty(datePropertyName)
+    const managedUrlProperty = await resolvePropertyRef(urlPropertyName, urlPropertyIdentOverride)
+    const managedDateProperty = await resolvePropertyRef(
+      datePropertyName,
+      datePropertyIdentOverride
+    )
 
     return {
-      url:
-        urlPropertyIdentOverride ||
-        normalizeIdent(managedUrlProperty?.['ident']) ||
-        getPluginPropertyIdent(urlPropertyName),
-      date:
-        datePropertyIdentOverride ||
-        normalizeIdent(managedDateProperty?.['ident']) ||
-        getPluginPropertyIdent(datePropertyName),
+      url: managedUrlProperty.ident,
+      date: managedDateProperty.ident,
     }
   } catch (error) {
     console.error('[Karakeep] Error ensuring managed properties:', error)
@@ -112,16 +131,22 @@ export async function initializeBookmarksTag(config?: Partial<SchemaConfig>): Pr
       return
     }
 
-    await ensureManagedPropertyIdents(config)
+    const urlPropertyIdentOverride = config?.urlPropertyIdentOverride?.trim()
+    const datePropertyIdentOverride = config?.datePropertyIdentOverride?.trim()
+    const managedUrlProperty = await resolvePropertyRef(urlPropertyName, urlPropertyIdentOverride)
+    const managedDateProperty = await resolvePropertyRef(
+      datePropertyName,
+      datePropertyIdentOverride
+    )
 
     try {
-      await logseq.Editor.addTagProperty(tag.uuid, datePropertyName)
+      await logseq.Editor.addTagProperty(tag.uuid, managedDateProperty.tagRef)
     } catch (err) {
       console.log('[Karakeep] Date property already attached or unavailable:', err)
     }
 
     try {
-      await logseq.Editor.addTagProperty(tag.uuid, urlPropertyName)
+      await logseq.Editor.addTagProperty(tag.uuid, managedUrlProperty.tagRef)
     } catch (err) {
       console.log('[Karakeep] URL property already attached or unavailable:', err)
     }
