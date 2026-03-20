@@ -60,8 +60,13 @@ function getLegacyPropertyKey(
 }
 
 async function getBookmarksPageBlocks(pageName: string): Promise<any[]> {
-  const blocks = await logseq.Editor.getPageBlocksTree(pageName)
-  return Array.isArray(blocks) ? blocks : []
+  const blocks = await logseq.DB.datascriptQuery(
+    `[:find (pull ?b [*])
+      :where
+      [?b :block/tags ?t]
+      [?t :block/name "${pageName.toLowerCase()}"]]`
+  )
+  return Array.isArray(blocks) ? blocks.map((row: any) => row?.[0]).filter(Boolean) : []
 }
 
 async function migrateBookmarkBlock(
@@ -81,7 +86,7 @@ async function migrateBookmarkBlock(
         ? (legacyUrl as any).value || (legacyUrl as any).title || (legacyUrl as any).content
         : null
     if (urlValue) {
-      await logseq.Editor.upsertBlockProperty(blockUuid, managedKeys.url, urlValue)
+      await logseq.Editor.upsertBlockProperty(blockUuid, managedKeys.urlWriteKey, urlValue)
     }
   }
 
@@ -398,7 +403,9 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
         const existingUrls = new Set<string>()
         for (const existingBlock of existingBlocks) {
           const props = await logseq.Editor.getBlockProperties(existingBlock.uuid)
-          const pluginUrl = props?.[managedKeys.url]
+          const pluginUrl =
+            (await logseq.Editor.getBlockProperty(existingBlock.uuid, managedKeys.urlWriteKey)) ||
+            props?.[managedKeys.url]
           const legacyUrlKey = getLegacyPropertyKey(props, 'url')
           const legacyUrl =
             legacyUrlKey && (await logseq.Editor.getBlockProperty(existingBlock.uuid, legacyUrlKey))
@@ -492,7 +499,7 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
           // Build properties object for batch setting
           const blockProperties: Record<string, any> = {}
           if (url) {
-            blockProperties[managedKeys.url] = url
+            blockProperties[managedKeys.urlWriteKey] = url
           }
 
           const newBlock = await logseq.Editor.appendBlockInPage(page.uuid, block.content, {

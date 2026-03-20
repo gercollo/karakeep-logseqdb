@@ -40,6 +40,7 @@ interface SchemaConfig {
 interface ResolvedPropertyRef {
   ident: string
   tagRef: string
+  writeKey: string
 }
 
 async function resolvePropertyRef(
@@ -59,6 +60,7 @@ async function resolvePropertyRef(
     return {
       ident,
       tagRef: uuid || name || trimmedOverride,
+      writeKey: name || propertyName,
     }
   }
 
@@ -72,15 +74,19 @@ async function resolvePropertyRef(
   return {
     ident: normalizeIdent(managedProperty?.['ident']) || getPluginPropertyIdent(propertyName),
     tagRef: managedProperty?.uuid || propertyName,
+    writeKey: managedProperty?.name || propertyName,
   }
 }
 
 /**
  * Ensure Karakeep-managed properties exist and return their actual idents.
  */
-export async function ensureManagedPropertyIdents(
-  config?: Partial<SchemaConfig>
-): Promise<{ url: string; date: string }> {
+export async function ensureManagedPropertyIdents(config?: Partial<SchemaConfig>): Promise<{
+  url: string
+  date: string
+  urlWriteKey: string
+  dateWriteKey: string
+}> {
   try {
     const urlPropertyName = config?.urlPropertyName || URL_PROPERTY
     const datePropertyName = config?.datePropertyName || DATE_PROPERTY
@@ -96,12 +102,16 @@ export async function ensureManagedPropertyIdents(
     return {
       url: managedUrlProperty.ident,
       date: managedDateProperty.ident,
+      urlWriteKey: managedUrlProperty.writeKey,
+      dateWriteKey: managedDateProperty.writeKey,
     }
   } catch (error) {
     console.error('[Karakeep] Error ensuring managed properties:', error)
     return {
       url: getPluginPropertyIdent(config?.urlPropertyName || URL_PROPERTY),
       date: getPluginPropertyIdent(config?.datePropertyName || DATE_PROPERTY),
+      urlWriteKey: config?.urlPropertyName || URL_PROPERTY,
+      dateWriteKey: config?.datePropertyName || DATE_PROPERTY,
     }
   }
 }
