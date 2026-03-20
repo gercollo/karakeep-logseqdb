@@ -236,6 +236,58 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
     let syncedIds = new Set(settings.syncedIds || [])
     console.log('[Karakeep] Existing synced IDs:', syncedIds.size)
 
+    // Remove stale syncedIds for bookmarks deleted from Logseq
+    // so they get re-imported on next sync
+    if (syncedIds.size > 0 && urlPropertyIdent) {
+      try {
+        const existingUrlsQuery = await logseq.DB.datascriptQuery(
+          `[:find ?url
+            :where
+            [?b :block/tags ?t]
+            [?t :block/name "${tagName.toLowerCase()}"]
+            [?b ${urlPropertyIdent} ?urlEntity]
+            [?urlEntity :block/title ?url]]`
+        )
+
+        const existingUrls = new Set(existingUrlsQuery.map((row: any[]) => row[0]))
+
+        // Build URL -> bookmarkId mapping from incoming blocks
+        const urlToBookmarkId = new Map<string, string>()
+        for (const block of blocks) {
+          const url = block.properties.url
+          if (url) {
+            urlToBookmarkId.set(url.trim(), (block as any).bookmarkId)
+          }
+        }
+
+        // Build set of bookmarkIds that still exist in Logseq
+        const presentIds = new Set<string>()
+        for (const url of existingUrls) {
+          const bookmarkId = urlToBookmarkId.get((url as string).trim())
+          if (bookmarkId) {
+            presentIds.add(bookmarkId)
+          }
+        }
+
+        // Remove stale IDs (synced but no longer in graph)
+        const staleIds = [...syncedIds].filter(
+          (id) => !presentIds.has(id) && urlToBookmarkId.has(id)
+        )
+        if (staleIds.length > 0) {
+          for (const id of staleIds) {
+            syncedIds.delete(id)
+          }
+          console.log(
+            '[Karakeep] Removed',
+            staleIds.length,
+            'stale synced IDs (bookmarks deleted from Logseq)'
+          )
+        }
+      } catch (err) {
+        console.warn('[Karakeep] Stale ID cleanup failed, continuing:', err)
+      }
+    }
+
     // Fallback: If syncedIds is empty, perform one-time URL query to backfill
     // This handles existing bookmarks from before bookmarkId tracking
     if (syncedIds.size === 0 && urlPropertyIdent) {
