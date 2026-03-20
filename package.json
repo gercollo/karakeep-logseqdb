@@ -1,6 +1,6 @@
 {
   "name": "logseq-karakeep-plugin",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "author": "gercollo",
   "description": "Sync bookmarks from Karakeep to Logseq.",
   "license": "MIT",

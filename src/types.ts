@@ -115,10 +115,6 @@ export interface PluginSettings {
   includeFavourited: boolean
   usePageReferences: boolean
   bookmarkTagName: string
-  urlPropertyName: string
-  datePropertyName: string
-  urlPropertyIdentOverride: string
-  datePropertyIdentOverride: string
   syncedIds: string[] // Hidden: stores IDs of already synced bookmarks
   autoSyncEnabled: boolean // Enable automatic sync
   autoSyncInterval: number // Auto-sync interval in minutes
@@ -131,18 +127,14 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   includeFavourited: false,
   usePageReferences: true,
   bookmarkTagName: 'Bookmarks',
-  urlPropertyName: 'bookmark_url',
-  datePropertyName: 'bookmark_date',
-  urlPropertyIdentOverride: '',
-  datePropertyIdentOverride: '',
   syncedIds: [],
   autoSyncEnabled: false,
   autoSyncInterval: 60, // Default: 60 minutes
 }
 
 // Property name constants (without namespace prefix)
-export const URL_PROPERTY = DEFAULT_SETTINGS.urlPropertyName
-export const DATE_PROPERTY = DEFAULT_SETTINGS.datePropertyName
+export const URL_PROPERTY = 'bookmark_url'
+export const DATE_PROPERTY = 'bookmark_date'
 export const BOOKMARKS_TAG = DEFAULT_SETTINGS.bookmarkTagName
 export const PLUGIN_ID = 'logseq-karakeep-plugin'
 

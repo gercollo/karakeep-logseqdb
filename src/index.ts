@@ -15,7 +15,7 @@ import { initializeSchema, ensureBookmarksPage, ensureManagedPropertyIdents } fr
 import { createAPIClient } from './api/karakeep'
 import { buildBookmarkBlocks } from './logic'
 import type { BookmarkBlock } from './types'
-import { URL_PROPERTY, DATE_PROPERTY, DEFAULT_SETTINGS } from './types'
+import { DEFAULT_SETTINGS } from './types'
 
 // ============================================================
 // Auto Sync State
@@ -24,34 +24,6 @@ import { URL_PROPERTY, DATE_PROPERTY, DEFAULT_SETTINGS } from './types'
 let autoSyncTimer: ReturnType<typeof setInterval> | null = null
 let lastAutoSyncTime: Date | null = null
 let syncInProgress = false // Prevent concurrent syncs
-
-async function migrateManagedPropertySettings(): Promise<void> {
-  const current = (logseq.settings || {}) as Record<string, unknown>
-  const next: Record<string, string> = {}
-
-  if (
-    current.urlPropertyName === 'url' ||
-    current.urlPropertyName === 'karakeep_url' ||
-    current.urlPropertyName === 'karakeep_url_clean' ||
-    current.urlPropertyName === 'test124_url'
-  ) {
-    next.urlPropertyName = DEFAULT_SETTINGS.urlPropertyName
-  }
-
-  if (
-    current.datePropertyName === 'date' ||
-    current.datePropertyName === 'karakeep_date' ||
-    current.datePropertyName === 'karakeep_date_clean' ||
-    current.datePropertyName === 'test124_date'
-  ) {
-    next.datePropertyName = DEFAULT_SETTINGS.datePropertyName
-  }
-
-  if (Object.keys(next).length > 0) {
-    await logseq.updateSettings(next)
-    console.log('[Karakeep] Migrated property settings:', next)
-  }
-}
 
 function getLegacyPropertyKey(
   props: Record<string, any> | null | undefined,
@@ -93,151 +65,6 @@ async function getBookmarksPageBlocks(pageName: string): Promise<any[]> {
       [?t :block/name "${pageName.toLowerCase()}"]]`
   )
   return Array.isArray(blocks) ? blocks.map((row: any) => row?.[0]).filter(Boolean) : []
-}
-
-async function migrateBookmarkBlock(
-  blockUuid: string,
-  managedKeys: { url: string; date: string; urlWriteKey: string; dateWriteKey: string }
-): Promise<{ migratedUrl: boolean; migratedDate: boolean }> {
-  const props = await logseq.Editor.getBlockProperties(blockUuid)
-  const legacyUrlKey = getLegacyPropertyKey(props, 'url')
-  const legacyDateKey = getLegacyPropertyKey(props, 'date')
-  const migratedUrl = !!(await logseq.Editor.getBlockProperty(blockUuid, managedKeys.urlWriteKey))
-  const migratedDate = !!(await logseq.Editor.getBlockProperty(blockUuid, managedKeys.dateWriteKey))
-
-  if (legacyUrlKey && !migratedUrl) {
-    const legacyUrl = await logseq.Editor.getBlockProperty(blockUuid, legacyUrlKey)
-    const urlValue =
-      legacyUrl && typeof legacyUrl === 'object'
-        ? (legacyUrl as any).value || (legacyUrl as any).title || (legacyUrl as any).content
-        : null
-    if (urlValue) {
-      await logseq.Editor.upsertBlockProperty(blockUuid, managedKeys.urlWriteKey, urlValue)
-    }
-  }
-
-  if (legacyDateKey && !migratedDate) {
-    const legacyDate = await logseq.Editor.getBlockProperty(blockUuid, legacyDateKey)
-    const dateEntityId =
-      legacyDate && typeof legacyDate === 'object' ? (legacyDate as any).id : null
-    if (typeof dateEntityId === 'number') {
-      await logseq.Editor.upsertBlockProperty(blockUuid, managedKeys.dateWriteKey, dateEntityId)
-    }
-  }
-
-  const updatedProps = await logseq.Editor.getBlockProperties(blockUuid)
-  return {
-    migratedUrl:
-      !!updatedProps?.[managedKeys.url] ||
-      !!(await logseq.Editor.getBlockProperty(blockUuid, managedKeys.urlWriteKey)),
-    migratedDate:
-      !!updatedProps?.[managedKeys.date] ||
-      !!(await logseq.Editor.getBlockProperty(blockUuid, managedKeys.dateWriteKey)),
-  }
-}
-
-async function migrateCurrentBookmark(): Promise<void> {
-  const currentBlock = await logseq.Editor.getCurrentBlock()
-  if (!currentBlock?.uuid) {
-    await logseq.UI.showMsg('No current block selected', 'warning')
-    return
-  }
-
-  const settings = getSettings()
-  const managedKeys = await ensureManagedPropertyIdents({
-    urlPropertyName: settings.urlPropertyName,
-    datePropertyName: settings.datePropertyName,
-    urlPropertyIdentOverride: settings.urlPropertyIdentOverride,
-    datePropertyIdentOverride: settings.datePropertyIdentOverride,
-  })
-  const result = await migrateBookmarkBlock(currentBlock.uuid, managedKeys)
-  await logseq.UI.showMsg(
-    `Migrated current bookmark: url=${result.migratedUrl ? 'yes' : 'no'}, date=${result.migratedDate ? 'yes' : 'no'}`,
-    'success'
-  )
-}
-
-async function migrateLegacyBookmarks(limit?: number): Promise<void> {
-  const settings = getSettings()
-  const blocks = await getBookmarksPageBlocks(settings.bookmarkTagName)
-  const managedKeys = await ensureManagedPropertyIdents({
-    urlPropertyName: settings.urlPropertyName,
-    datePropertyName: settings.datePropertyName,
-    urlPropertyIdentOverride: settings.urlPropertyIdentOverride,
-    datePropertyIdentOverride: settings.datePropertyIdentOverride,
-  })
-
-  const candidates = blocks
-    .filter((block) => getLegacyPropertyKey(block, 'url') || getLegacyPropertyKey(block, 'date'))
-    .slice(0, typeof limit === 'number' ? limit : blocks.length)
-
-  let migrated = 0
-  for (const block of candidates) {
-    const result = await migrateBookmarkBlock(block.uuid, managedKeys)
-    if (result.migratedUrl || result.migratedDate) {
-      migrated += 1
-    }
-  }
-
-  await logseq.UI.showMsg(
-    `Migrated ${migrated} legacy bookmarks${typeof limit === 'number' ? '' : ' (all)'}`,
-    'success'
-  )
-}
-
-async function removeBlockPropertyIfPresent(blockUuid: string, key: string): Promise<boolean> {
-  try {
-    const props = await logseq.Editor.getBlockProperties(blockUuid)
-    if (!props || !(key in props)) {
-      return false
-    }
-    await logseq.Editor.removeBlockProperty(blockUuid, key)
-    return true
-  } catch (error) {
-    console.error(`[Karakeep] Failed removing property ${key} from ${blockUuid}:`, error)
-    return false
-  }
-}
-
-async function cleanupInvalidBookmarkProperties(): Promise<void> {
-  const settings = getSettings()
-  const blocks = await getBookmarksPageBlocks(settings.bookmarkTagName)
-  const badBlockKeys = [
-    ':plugin.property.logseq-karakeep-plugin/date',
-    ':plugin.property.logseq-karakeep-plugin/karakeep_date',
-    ':plugin.property.logseq-karakeep-plugin/url',
-    ':plugin.property._test_plugin/date',
-    ':plugin.property._test_plugin/url',
-  ]
-  let cleanedBlocks = 0
-  let removedValues = 0
-
-  for (const block of blocks) {
-    let cleanedThisBlock = false
-    for (const key of badBlockKeys) {
-      const removed = await removeBlockPropertyIfPresent(block.uuid, key)
-      if (removed) {
-        removedValues += 1
-        cleanedThisBlock = true
-      }
-    }
-    if (cleanedThisBlock) {
-      cleanedBlocks += 1
-    }
-  }
-
-  for (const propertyName of ['url', 'date', 'karakeep_url', 'karakeep_date']) {
-    try {
-      await logseq.Editor.removeProperty(propertyName)
-    } catch (error) {
-      console.log(`[Karakeep] Property ${propertyName} not removed:`, error)
-    }
-  }
-
-  await logseq.UI.showMsg(
-    `Cleaned ${removedValues} invalid properties across ${cleanedBlocks} bookmarks`,
-    'success'
-  )
 }
 
 /**
@@ -408,12 +235,7 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
 
     console.log('[Karakeep] Tag:', `${tag.uuid} (ID: ${tag.id})`)
 
-    const managedKeys = await ensureManagedPropertyIdents({
-      urlPropertyName: settings.urlPropertyName || URL_PROPERTY,
-      datePropertyName: settings.datePropertyName || DATE_PROPERTY,
-      urlPropertyIdentOverride: settings.urlPropertyIdentOverride,
-      datePropertyIdentOverride: settings.datePropertyIdentOverride,
-    })
+    const managedKeys = await ensureManagedPropertyIdents()
 
     console.log('[Karakeep] Discovered property idents:', {
       date: managedKeys.date,
@@ -710,7 +532,6 @@ async function main() {
     console.log('[Karakeep] Step 1: Registering settings...')
     // 1. Register settings
     registerSettings()
-    await migrateManagedPropertySettings()
     console.log('[Karakeep] ✓ Settings registered')
 
     console.log('[Karakeep] Step 2: Initializing schema...')
@@ -718,10 +539,6 @@ async function main() {
     // 2. Initialize schema (properties and tag)
     await initializeSchema({
       tagName: settings.bookmarkTagName,
-      urlPropertyName: settings.urlPropertyName,
-      datePropertyName: settings.datePropertyName,
-      urlPropertyIdentOverride: settings.urlPropertyIdentOverride,
-      datePropertyIdentOverride: settings.datePropertyIdentOverride,
     })
     await ensureBookmarksPage(settings.bookmarkTagName)
     console.log('[Karakeep] ✓ Schema initialized')
@@ -731,67 +548,13 @@ async function main() {
     logseq.Editor.registerSlashCommand('Karakeep: Retrieve Bookmarks', async (e) => {
       await retrieveAndInsert(e.uuid)
     })
-    logseq.Editor.registerSlashCommand('Karakeep: Migrate Current Bookmark', async () => {
-      await migrateCurrentBookmark()
-    })
-    logseq.Editor.registerSlashCommand('Karakeep: Migrate 3 Bookmarks', async () => {
-      await migrateLegacyBookmarks(3)
-    })
-    logseq.Editor.registerSlashCommand('Karakeep: Migrate 10 Bookmarks', async () => {
-      await migrateLegacyBookmarks(10)
-    })
-    logseq.Editor.registerSlashCommand('Karakeep: Migrate All Bookmarks', async () => {
-      await migrateLegacyBookmarks()
-    })
-    logseq.Editor.registerSlashCommand(
-      'Karakeep: Cleanup Invalid Bookmark Properties',
-      async () => {
-        await cleanupInvalidBookmarkProperties()
-      }
-    )
     logseq.App.registerCommandPalette(
       {
-        key: 'karakeep-migrate-current-bookmark',
-        label: 'Karakeep: Migrate Current Bookmark',
+        key: 'karakeep-retrieve-bookmarks',
+        label: 'Karakeep: Retrieve Bookmarks',
       },
       async () => {
-        await migrateCurrentBookmark()
-      }
-    )
-    logseq.App.registerCommandPalette(
-      {
-        key: 'karakeep-migrate-3-bookmarks',
-        label: 'Karakeep: Migrate 3 Bookmarks',
-      },
-      async () => {
-        await migrateLegacyBookmarks(3)
-      }
-    )
-    logseq.App.registerCommandPalette(
-      {
-        key: 'karakeep-migrate-10-bookmarks',
-        label: 'Karakeep: Migrate 10 Bookmarks',
-      },
-      async () => {
-        await migrateLegacyBookmarks(10)
-      }
-    )
-    logseq.App.registerCommandPalette(
-      {
-        key: 'karakeep-migrate-all-bookmarks',
-        label: 'Karakeep: Migrate All Bookmarks',
-      },
-      async () => {
-        await migrateLegacyBookmarks()
-      }
-    )
-    logseq.App.registerCommandPalette(
-      {
-        key: 'karakeep-cleanup-invalid-bookmark-properties',
-        label: 'Karakeep: Cleanup Invalid Bookmark Properties',
-      },
-      async () => {
-        await cleanupInvalidBookmarkProperties()
+        await retrieveAndInsert('')
       }
     )
 

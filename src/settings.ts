@@ -55,34 +55,6 @@ export function registerSettings(): void {
         default: DEFAULT_SETTINGS.bookmarkTagName,
       },
       {
-        key: 'urlPropertyName',
-        type: 'string',
-        title: 'URL Property Name',
-        description: 'Tag property name for bookmark URLs',
-        default: DEFAULT_SETTINGS.urlPropertyName,
-      },
-      {
-        key: 'datePropertyName',
-        type: 'string',
-        title: 'Date Property Name',
-        description: 'Tag property name for bookmark dates',
-        default: DEFAULT_SETTINGS.datePropertyName,
-      },
-      {
-        key: 'urlPropertyIdentOverride',
-        type: 'string',
-        title: 'URL Property Ident Override',
-        description: 'Advanced: full :db/ident for URL property (optional)',
-        default: DEFAULT_SETTINGS.urlPropertyIdentOverride,
-      },
-      {
-        key: 'datePropertyIdentOverride',
-        type: 'string',
-        title: 'Date Property Ident Override',
-        description: 'Advanced: full :db/ident for date property (optional)',
-        default: DEFAULT_SETTINGS.datePropertyIdentOverride,
-      },
-      {
         key: 'syncedIds',
         type: 'string',
         title: 'Synced IDs',
@@ -153,20 +125,6 @@ export function getSettings(): PluginSettings {
         bookmarkTagName:
           (typeof s.bookmarkTagName === 'string' ? s.bookmarkTagName.trim() : undefined) ||
           DEFAULT_SETTINGS.bookmarkTagName,
-        urlPropertyName:
-          (typeof s.urlPropertyName === 'string' ? s.urlPropertyName.trim() : undefined) ||
-          DEFAULT_SETTINGS.urlPropertyName,
-        datePropertyName:
-          (typeof s.datePropertyName === 'string' ? s.datePropertyName.trim() : undefined) ||
-          DEFAULT_SETTINGS.datePropertyName,
-        urlPropertyIdentOverride:
-          (typeof s.urlPropertyIdentOverride === 'string'
-            ? s.urlPropertyIdentOverride.trim()
-            : undefined) ?? DEFAULT_SETTINGS.urlPropertyIdentOverride,
-        datePropertyIdentOverride:
-          (typeof s.datePropertyIdentOverride === 'string'
-            ? s.datePropertyIdentOverride.trim()
-            : undefined) ?? DEFAULT_SETTINGS.datePropertyIdentOverride,
         syncedIds: syncedIds,
         autoSyncEnabled:
           (typeof s.autoSyncEnabled === 'boolean' ? s.autoSyncEnabled : undefined) ??
