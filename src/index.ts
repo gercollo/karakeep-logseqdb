@@ -383,6 +383,7 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
 
     const insertedUuids: string[] = []
     const skippedDuplicates: string[] = []
+    let failedInserts = 0
 
     // Fast deduplication using syncedIds from settings (O(1) Set lookup)
     let syncedIds = new Set(settings.syncedIds || [])
@@ -518,6 +519,7 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
 
           insertedUuids.push(newBlock.uuid)
         } catch (blockError) {
+          failedInserts += 1
           console.error('[Karakeep] Error processing block:', blockError)
           // Continue with next block
         }
@@ -532,11 +534,20 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
     await logseq.UI.closeMsg(msgKey)
 
     // Save updated synced IDs to settings
-    await saveSyncedIds(Array.from(newSyncedIds))
-    console.log('[Karakeep] Saved synced IDs:', newSyncedIds.size)
+    if (insertedUuids.length > 0) {
+      await saveSyncedIds(Array.from(newSyncedIds))
+      console.log('[Karakeep] Saved synced IDs:', newSyncedIds.size)
+    } else {
+      console.log('[Karakeep] No successful inserts, synced IDs unchanged')
+    }
 
     // Show appropriate message based on results
-    if (skippedDuplicates.length > 0) {
+    if (failedInserts > 0) {
+      await logseq.UI.showMsg(
+        `Inserted ${insertedUuids.length} bookmarks, skipped ${skippedDuplicates.length} duplicates, failed ${failedInserts}`,
+        'warning'
+      )
+    } else if (skippedDuplicates.length > 0) {
       await logseq.UI.showMsg(
         `Inserted ${insertedUuids.length} bookmarks, skipped ${skippedDuplicates.length} duplicates`,
         'success'
