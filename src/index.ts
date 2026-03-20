@@ -618,6 +618,9 @@ async function main() {
     logseq.Editor.registerSlashCommand('Karakeep: Migrate Current Bookmark', async () => {
       await migrateCurrentBookmark()
     })
+    logseq.Editor.registerSlashCommand('Karakeep: Migrate 3 Bookmarks', async () => {
+      await migrateLegacyBookmarks(3)
+    })
     logseq.Editor.registerSlashCommand('Karakeep: Migrate 10 Bookmarks', async () => {
       await migrateLegacyBookmarks(10)
     })
@@ -628,6 +631,15 @@ async function main() {
       },
       async () => {
         await migrateCurrentBookmark()
+      }
+    )
+    logseq.App.registerCommandPalette(
+      {
+        key: 'karakeep-migrate-3-bookmarks',
+        label: 'Karakeep: Migrate 3 Bookmarks',
+      },
+      async () => {
+        await migrateLegacyBookmarks(3)
       }
     )
     logseq.App.registerCommandPalette(
