@@ -59,14 +59,10 @@ export async function ensureManagedPropertyIdents(
     await logseq.Editor.upsertProperty(urlPropertyName, {
       type: 'url',
       cardinality: 'one',
-      hide: true,
-      public: false,
     })
     await logseq.Editor.upsertProperty(datePropertyName, {
       type: 'date',
       cardinality: 'one',
-      hide: true,
-      public: false,
     })
 
     const managedUrlProperty = await logseq.Editor.getProperty(urlPropertyName)

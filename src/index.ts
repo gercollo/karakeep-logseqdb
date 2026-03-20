@@ -86,14 +86,7 @@ async function migrateBookmarkBlock(
   }
 
   if (legacyDateKey && !migratedDate) {
-    const legacyDate = await logseq.Editor.getBlockProperty(blockUuid, legacyDateKey)
-    const dateValue =
-      legacyDate && typeof legacyDate === 'object'
-        ? (legacyDate as any).value || (legacyDate as any).title || (legacyDate as any).content
-        : null
-    if (dateValue) {
-      await logseq.Editor.upsertBlockProperty(blockUuid, managedKeys.date, dateValue)
-    }
+    // Disabled until we have a verified valid journal-date payload for DB graphs.
   }
 
   const updatedProps = await logseq.Editor.getBlockProperties(blockUuid)
@@ -148,6 +141,59 @@ async function migrateLegacyBookmarks(limit: number): Promise<void> {
   }
 
   await logseq.UI.showMsg(`Migrated ${migrated} legacy bookmarks`, 'success')
+}
+
+async function removeBlockPropertyIfPresent(blockUuid: string, key: string): Promise<boolean> {
+  try {
+    const props = await logseq.Editor.getBlockProperties(blockUuid)
+    if (!props || !(key in props)) {
+      return false
+    }
+    await logseq.Editor.removeBlockProperty(blockUuid, key)
+    return true
+  } catch (error) {
+    console.error(`[Karakeep] Failed removing property ${key} from ${blockUuid}:`, error)
+    return false
+  }
+}
+
+async function cleanupInvalidBookmarkProperties(): Promise<void> {
+  const settings = getSettings()
+  const blocks = await getBookmarksPageBlocks(settings.bookmarkTagName)
+  const badBlockKeys = [
+    ':plugin.property.logseq-karakeep-plugin/date',
+    ':plugin.property.logseq-karakeep-plugin/karakeep_date',
+    ':plugin.property._test_plugin/date',
+  ]
+  let cleanedBlocks = 0
+  let removedValues = 0
+
+  for (const block of blocks) {
+    let cleanedThisBlock = false
+    for (const key of badBlockKeys) {
+      const removed = await removeBlockPropertyIfPresent(block.uuid, key)
+      if (removed) {
+        removedValues += 1
+        cleanedThisBlock = true
+      }
+    }
+    if (cleanedThisBlock) {
+      cleanedBlocks += 1
+    }
+  }
+
+  for (const propertyName of ['karakeep_url', 'karakeep_date']) {
+    try {
+      await logseq.Editor.removeProperty(propertyName)
+    } catch (error) {
+      console.log(`[Karakeep] Property ${propertyName} not removed:`, error)
+    }
+  }
+
+  await logseq.UI.showMsg(
+    `Cleaned ${removedValues} invalid properties across ${cleanedBlocks} bookmarks`,
+    'success'
+  )
 }
 
 /**
@@ -439,13 +485,9 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
       for (const block of batch) {
         try {
           const url = block.properties.url
-          const dateString = (block as any).dateString
 
           // Build properties object for batch setting
           const blockProperties: Record<string, any> = {}
-          if (dateString) {
-            blockProperties[managedKeys.date] = dateString
-          }
           if (url) {
             blockProperties[managedKeys.url] = url
           }
@@ -624,6 +666,12 @@ async function main() {
     logseq.Editor.registerSlashCommand('Karakeep: Migrate 10 Bookmarks', async () => {
       await migrateLegacyBookmarks(10)
     })
+    logseq.Editor.registerSlashCommand(
+      'Karakeep: Cleanup Invalid Bookmark Properties',
+      async () => {
+        await cleanupInvalidBookmarkProperties()
+      }
+    )
     logseq.App.registerCommandPalette(
       {
         key: 'karakeep-migrate-current-bookmark',
@@ -649,6 +697,15 @@ async function main() {
       },
       async () => {
         await migrateLegacyBookmarks(10)
+      }
+    )
+    logseq.App.registerCommandPalette(
+      {
+        key: 'karakeep-cleanup-invalid-bookmark-properties',
+        label: 'Karakeep: Cleanup Invalid Bookmark Properties',
+      },
+      async () => {
+        await cleanupInvalidBookmarkProperties()
       }
     )
 
