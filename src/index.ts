@@ -163,7 +163,9 @@ async function cleanupInvalidBookmarkProperties(): Promise<void> {
   const badBlockKeys = [
     ':plugin.property.logseq-karakeep-plugin/date',
     ':plugin.property.logseq-karakeep-plugin/karakeep_date',
+    ':plugin.property.logseq-karakeep-plugin/url',
     ':plugin.property._test_plugin/date',
+    ':plugin.property._test_plugin/url',
   ]
   let cleanedBlocks = 0
   let removedValues = 0
@@ -182,7 +184,7 @@ async function cleanupInvalidBookmarkProperties(): Promise<void> {
     }
   }
 
-  for (const propertyName of ['karakeep_url', 'karakeep_date']) {
+  for (const propertyName of ['url', 'date', 'karakeep_url', 'karakeep_date']) {
     try {
       await logseq.Editor.removeProperty(propertyName)
     } catch (error) {
