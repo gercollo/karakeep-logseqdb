@@ -69,6 +69,22 @@ function getLegacyPropertyKey(
   return null
 }
 
+function propertyEntityToString(value: unknown): string | null {
+  if (typeof value === 'string') {
+    return value.trim() || null
+  }
+
+  if (value && typeof value === 'object') {
+    const entity = value as Record<string, unknown>
+    const candidate = entity.value || entity.title || entity.content || entity.name
+    if (typeof candidate === 'string') {
+      return candidate.trim() || null
+    }
+  }
+
+  return null
+}
+
 async function getBookmarksPageBlocks(pageName: string): Promise<any[]> {
   const blocks = await logseq.DB.datascriptQuery(
     `[:find (pull ?b [*])
@@ -424,7 +440,7 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
         const existingUrls = new Set<string>()
         for (const existingBlock of existingBlocks) {
           const props = await logseq.Editor.getBlockProperties(existingBlock.uuid)
-          const pluginUrl =
+          const pluginUrlEntity =
             (await logseq.Editor.getBlockProperty(existingBlock.uuid, managedKeys.urlWriteKey)) ||
             props?.[managedKeys.url]
           const legacyUrlKey = getLegacyPropertyKey(props, 'url')
@@ -432,11 +448,7 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
             legacyUrlKey && (await logseq.Editor.getBlockProperty(existingBlock.uuid, legacyUrlKey))
 
           const urlValue =
-            pluginUrl ||
-            (legacyUrl && typeof legacyUrl === 'object'
-              ? (legacyUrl as any).value || (legacyUrl as any).title || (legacyUrl as any).content
-              : null) ||
-            null
+            propertyEntityToString(pluginUrlEntity) || propertyEntityToString(legacyUrl) || null
 
           if (typeof urlValue === 'string' && urlValue.trim()) {
             existingUrls.add(urlValue.trim())
