@@ -63,7 +63,7 @@ export async function ensureManagedPropertyIdents(
       public: false,
     })
     await logseq.Editor.upsertProperty(datePropertyName, {
-      type: 'default',
+      type: 'date',
       cardinality: 'one',
       hide: true,
       public: false,

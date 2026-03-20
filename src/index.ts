@@ -25,6 +25,24 @@ let autoSyncTimer: ReturnType<typeof setInterval> | null = null
 let lastAutoSyncTime: Date | null = null
 let syncInProgress = false // Prevent concurrent syncs
 
+async function migrateManagedPropertySettings(): Promise<void> {
+  const current = (logseq.settings || {}) as Record<string, unknown>
+  const next: Record<string, string> = {}
+
+  if (current.urlPropertyName === 'url') {
+    next.urlPropertyName = DEFAULT_SETTINGS.urlPropertyName
+  }
+
+  if (current.datePropertyName === 'date') {
+    next.datePropertyName = DEFAULT_SETTINGS.datePropertyName
+  }
+
+  if (Object.keys(next).length > 0) {
+    await logseq.updateSettings(next)
+    console.log('[Karakeep] Migrated property settings:', next)
+  }
+}
+
 function getLegacyPropertyKey(
   props: Record<string, any> | null | undefined,
   propertyName: string
@@ -576,6 +594,7 @@ async function main() {
     console.log('[Karakeep] Step 1: Registering settings...')
     // 1. Register settings
     registerSettings()
+    await migrateManagedPropertySettings()
     console.log('[Karakeep] ✓ Settings registered')
 
     console.log('[Karakeep] Step 2: Initializing schema...')
