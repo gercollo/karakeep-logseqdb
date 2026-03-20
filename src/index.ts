@@ -32,6 +32,7 @@ async function migrateManagedPropertySettings(): Promise<void> {
   if (
     current.urlPropertyName === 'url' ||
     current.urlPropertyName === 'karakeep_url' ||
+    current.urlPropertyName === 'karakeep_url_clean' ||
     current.urlPropertyName === 'test124_url'
   ) {
     next.urlPropertyName = DEFAULT_SETTINGS.urlPropertyName
@@ -40,6 +41,7 @@ async function migrateManagedPropertySettings(): Promise<void> {
   if (
     current.datePropertyName === 'date' ||
     current.datePropertyName === 'karakeep_date' ||
+    current.datePropertyName === 'karakeep_date_clean' ||
     current.datePropertyName === 'test124_date'
   ) {
     next.datePropertyName = DEFAULT_SETTINGS.datePropertyName
