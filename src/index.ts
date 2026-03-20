@@ -141,7 +141,7 @@ async function migrateCurrentBookmark(): Promise<void> {
   )
 }
 
-async function migrateLegacyBookmarks(limit: number): Promise<void> {
+async function migrateLegacyBookmarks(limit?: number): Promise<void> {
   const settings = getSettings()
   const blocks = await getBookmarksPageBlocks(settings.bookmarkTagName)
   const managedKeys = await ensureManagedPropertyIdents({
@@ -153,8 +153,7 @@ async function migrateLegacyBookmarks(limit: number): Promise<void> {
 
   const candidates = blocks
     .filter((block) => getLegacyPropertyKey(block, 'url') || getLegacyPropertyKey(block, 'date'))
-    .filter((block) => !block[managedKeys.url] || !block[managedKeys.date])
-    .slice(0, limit)
+    .slice(0, typeof limit === 'number' ? limit : blocks.length)
 
   let migrated = 0
   for (const block of candidates) {
@@ -164,7 +163,10 @@ async function migrateLegacyBookmarks(limit: number): Promise<void> {
     }
   }
 
-  await logseq.UI.showMsg(`Migrated ${migrated} legacy bookmarks`, 'success')
+  await logseq.UI.showMsg(
+    `Migrated ${migrated} legacy bookmarks${typeof limit === 'number' ? '' : ' (all)'}`,
+    'success'
+  )
 }
 
 async function removeBlockPropertyIfPresent(blockUuid: string, key: string): Promise<boolean> {
@@ -716,6 +718,9 @@ async function main() {
     logseq.Editor.registerSlashCommand('Karakeep: Migrate 10 Bookmarks', async () => {
       await migrateLegacyBookmarks(10)
     })
+    logseq.Editor.registerSlashCommand('Karakeep: Migrate All Bookmarks', async () => {
+      await migrateLegacyBookmarks()
+    })
     logseq.Editor.registerSlashCommand(
       'Karakeep: Cleanup Invalid Bookmark Properties',
       async () => {
@@ -747,6 +752,15 @@ async function main() {
       },
       async () => {
         await migrateLegacyBookmarks(10)
+      }
+    )
+    logseq.App.registerCommandPalette(
+      {
+        key: 'karakeep-migrate-all-bookmarks',
+        label: 'Karakeep: Migrate All Bookmarks',
+      },
+      async () => {
+        await migrateLegacyBookmarks()
       }
     )
     logseq.App.registerCommandPalette(
