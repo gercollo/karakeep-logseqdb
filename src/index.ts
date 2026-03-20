@@ -11,7 +11,7 @@
 import '@logseq/libs'
 
 import { registerSettings, getSettings, saveSyncedIds } from './settings'
-import { initializeSchema, ensureBookmarksPage, discoverPropertyIdent } from './schema'
+import { initializeSchema, ensureBookmarksPage, ensureManagedPropertyIdents } from './schema'
 import { createAPIClient } from './api/karakeep'
 import { buildBookmarkBlocks } from './logic'
 import type { BookmarkBlock } from './types'
@@ -24,6 +24,113 @@ import { URL_PROPERTY, DATE_PROPERTY, DEFAULT_SETTINGS } from './types'
 let autoSyncTimer: ReturnType<typeof setInterval> | null = null
 let lastAutoSyncTime: Date | null = null
 let syncInProgress = false // Prevent concurrent syncs
+
+function getLegacyPropertyKey(
+  props: Record<string, any> | null | undefined,
+  propertyName: string
+): string | null {
+  if (!props) return null
+  for (const key of Object.keys(props)) {
+    if (key.startsWith(':user.property/')) {
+      const tail = key.split('/').pop() || ''
+      if (tail.toLowerCase().startsWith(propertyName.toLowerCase())) {
+        return key
+      }
+    }
+  }
+  return null
+}
+
+async function getBookmarksPageBlocks(pageName: string): Promise<any[]> {
+  const blocks = await logseq.Editor.getPageBlocksTree(pageName)
+  return Array.isArray(blocks) ? blocks : []
+}
+
+async function migrateBookmarkBlock(
+  blockUuid: string,
+  managedKeys: { url: string; date: string }
+): Promise<{ migratedUrl: boolean; migratedDate: boolean }> {
+  const props = await logseq.Editor.getBlockProperties(blockUuid)
+  const legacyUrlKey = getLegacyPropertyKey(props, 'url')
+  const legacyDateKey = getLegacyPropertyKey(props, 'date')
+  const migratedUrl = !!props?.[managedKeys.url]
+  const migratedDate = !!props?.[managedKeys.date]
+
+  if (legacyUrlKey && !migratedUrl) {
+    const legacyUrl = await logseq.Editor.getBlockProperty(blockUuid, legacyUrlKey)
+    const urlValue =
+      legacyUrl && typeof legacyUrl === 'object'
+        ? (legacyUrl as any).value || (legacyUrl as any).title || (legacyUrl as any).content
+        : null
+    if (urlValue) {
+      await logseq.Editor.upsertBlockProperty(blockUuid, managedKeys.url, urlValue)
+    }
+  }
+
+  if (legacyDateKey && !migratedDate) {
+    const legacyDate = await logseq.Editor.getBlockProperty(blockUuid, legacyDateKey)
+    const dateValue =
+      legacyDate && typeof legacyDate === 'object'
+        ? (legacyDate as any).value || (legacyDate as any).title || (legacyDate as any).content
+        : null
+    if (dateValue) {
+      await logseq.Editor.upsertBlockProperty(blockUuid, managedKeys.date, dateValue)
+    }
+  }
+
+  const updatedProps = await logseq.Editor.getBlockProperties(blockUuid)
+  return {
+    migratedUrl: !!updatedProps?.[managedKeys.url],
+    migratedDate: !!updatedProps?.[managedKeys.date],
+  }
+}
+
+async function migrateCurrentBookmark(): Promise<void> {
+  const currentBlock = await logseq.Editor.getCurrentBlock()
+  if (!currentBlock?.uuid) {
+    await logseq.UI.showMsg('No current block selected', 'warning')
+    return
+  }
+
+  const settings = getSettings()
+  const managedKeys = await ensureManagedPropertyIdents({
+    urlPropertyName: settings.urlPropertyName,
+    datePropertyName: settings.datePropertyName,
+    urlPropertyIdentOverride: settings.urlPropertyIdentOverride,
+    datePropertyIdentOverride: settings.datePropertyIdentOverride,
+  })
+  const result = await migrateBookmarkBlock(currentBlock.uuid, managedKeys)
+  await logseq.UI.showMsg(
+    `Migrated current bookmark: url=${result.migratedUrl ? 'yes' : 'no'}, date=${result.migratedDate ? 'yes' : 'no'}`,
+    'success'
+  )
+}
+
+async function migrateLegacyBookmarks(limit: number): Promise<void> {
+  const settings = getSettings()
+  const blocks = await getBookmarksPageBlocks(settings.bookmarkTagName)
+  const managedKeys = await ensureManagedPropertyIdents({
+    urlPropertyName: settings.urlPropertyName,
+    datePropertyName: settings.datePropertyName,
+    urlPropertyIdentOverride: settings.urlPropertyIdentOverride,
+    datePropertyIdentOverride: settings.datePropertyIdentOverride,
+  })
+
+  const candidates = blocks
+    .filter((block) => getLegacyPropertyKey(block, 'url') || getLegacyPropertyKey(block, 'date'))
+    .filter((block) => !block[managedKeys.url] || !block[managedKeys.date])
+    .slice(0, limit)
+
+  let migrated = 0
+  for (const block of candidates) {
+    const result = await migrateBookmarkBlock(block.uuid, managedKeys)
+    if (result.migratedUrl || result.migratedDate) {
+      migrated += 1
+    }
+  }
+
+  await logseq.UI.showMsg(`Migrated ${migrated} legacy bookmarks`, 'success')
+}
 
 /**
  * Perform auto-sync (background sync without block context)
@@ -144,10 +251,6 @@ function updateAutoSync(): void {
  * Insert bookmarks with proper tagging and properties
  * Processes in batches to avoid overwhelming the UI
  *
- * KEY INSIGHT from CLI investigation:
- * - Properties added ONLY to tag schema (not upsertProperty) will use :user.property/ namespace
- * - DO NOT call upsertProperty for date/url - this creates plugin properties
- *
  * @param blocks - The bookmark blocks to insert
  * @param _blockUuid - UUID of the block where command was invoked (unused)
  */
@@ -158,11 +261,6 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
     const settings = getSettings()
     const tagName = settings.bookmarkTagName || DEFAULT_SETTINGS.bookmarkTagName
     const pageName = tagName
-    const urlPropertyName = settings.urlPropertyName || URL_PROPERTY
-    const datePropertyName = settings.datePropertyName || DATE_PROPERTY
-    const urlPropertyIdentOverride = settings.urlPropertyIdentOverride?.trim()
-    const datePropertyIdentOverride = settings.datePropertyIdentOverride?.trim()
-
     console.log('[Karakeep] ===== INSERTING BOOKMARKS =====')
     console.log('[Karakeep] Number of blocks:', blocks.length)
 
@@ -189,7 +287,8 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
     let tag = await logseq.Editor.getTag(tagName)
     if (!tag) {
       console.log(`[Karakeep] Creating #${tagName} tag...`)
-      tag = await logseq.Editor.createTag(tagName)
+      await logseq.Editor.createTag(tagName)
+      tag = await logseq.Editor.getTag(tagName)
     }
 
     if (!tag) {
@@ -201,29 +300,16 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
 
     console.log('[Karakeep] Tag:', `${tag.uuid} (ID: ${tag.id})`)
 
-    // Discover property idents dynamically - suffixes vary per database
-    const datePropertyIdent =
-      datePropertyIdentOverride || (await discoverPropertyIdent(tag.uuid, datePropertyName))
-    const urlPropertyIdent =
-      urlPropertyIdentOverride || (await discoverPropertyIdent(tag.uuid, urlPropertyName))
-
-    // In clean/new graphs, ident discovery can fail right after schema creation.
-    // Fallback to plain property names to keep sync working.
-    const usePropertyFallback = !datePropertyIdent || !urlPropertyIdent
-    if (usePropertyFallback) {
-      console.warn('[Karakeep] Failed to discover property idents, using fallback property keys')
-      await logseq.UI.showMsg(
-        'Using fallback property mode (properties will still be synced)',
-        'warning'
-      )
-    }
-
-    const datePropertyKey = datePropertyIdent || datePropertyName
-    const urlPropertyKey = urlPropertyIdent || urlPropertyName
+    const managedKeys = await ensureManagedPropertyIdents({
+      urlPropertyName: settings.urlPropertyName || URL_PROPERTY,
+      datePropertyName: settings.datePropertyName || DATE_PROPERTY,
+      urlPropertyIdentOverride: settings.urlPropertyIdentOverride,
+      datePropertyIdentOverride: settings.datePropertyIdentOverride,
+    })
 
     console.log('[Karakeep] Discovered property idents:', {
-      date: datePropertyIdent,
-      url: urlPropertyIdent,
+      date: managedKeys.date,
+      url: managedKeys.url,
     })
 
     console.log('[Karakeep] Tag UUID:', tag.uuid)
@@ -238,19 +324,30 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
 
     // Fallback: If syncedIds is empty, perform one-time URL query to backfill
     // This handles existing bookmarks from before bookmarkId tracking
-    if (syncedIds.size === 0 && urlPropertyIdent) {
+    if (syncedIds.size === 0) {
       console.log('[Karakeep] No synced IDs found, performing one-time backfill...')
       try {
-        const existingUrlsQuery = await logseq.DB.datascriptQuery(
-          `[:find ?url
-            :where
-            [?b :block/tags ?t]
-            [?t :block/name "${tagName.toLowerCase()}"]
-            [?b ${urlPropertyIdent} ?urlEntity]
-            [?urlEntity :block/title ?url]]`
-        )
+        const existingBlocks = await getBookmarksPageBlocks(pageName)
+        const existingUrls = new Set<string>()
+        for (const existingBlock of existingBlocks) {
+          const props = await logseq.Editor.getBlockProperties(existingBlock.uuid)
+          const pluginUrl = props?.[managedKeys.url]
+          const legacyUrlKey = getLegacyPropertyKey(props, 'url')
+          const legacyUrl =
+            legacyUrlKey && (await logseq.Editor.getBlockProperty(existingBlock.uuid, legacyUrlKey))
 
-        const existingUrls = new Set(existingUrlsQuery.map((row: any[]) => row[0]))
+          const urlValue =
+            pluginUrl ||
+            (legacyUrl && typeof legacyUrl === 'object'
+              ? (legacyUrl as any).value || (legacyUrl as any).title || (legacyUrl as any).content
+              : null) ||
+            null
+
+          if (typeof urlValue === 'string' && urlValue.trim()) {
+            existingUrls.add(urlValue.trim())
+          }
+        }
+
         console.log('[Karakeep] Backfill: Found', existingUrls.size, 'existing bookmarks by URL')
 
         // Build URL -> bookmarkId mapping from incoming blocks
@@ -274,8 +371,6 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
       } catch (err) {
         console.warn('[Karakeep] Backfill query failed, continuing without backfill:', err)
       }
-    } else if (syncedIds.size === 0) {
-      console.log('[Karakeep] Backfill skipped: URL property ident unavailable in fallback mode')
     }
 
     // Filter out duplicates using bookmarkId (O(n) instead of O(n*m))
@@ -328,33 +423,15 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
           const url = block.properties.url
           const dateString = (block as any).dateString
 
-          // Pre-fetch or create journal page for date property
-          let journalPageId: number | undefined
-          if (dateString) {
-            try {
-              let journalPage = await logseq.Editor.getPage(dateString)
-              if (!journalPage) {
-                await logseq.Editor.createPage(dateString, {}, { journal: true })
-                journalPage = await logseq.Editor.getPage(dateString)
-              }
-              journalPageId = journalPage?.id
-            } catch (err) {
-              console.error('[Karakeep] Error getting/creating journal page:', err)
-            }
-          }
-
           // Build properties object for batch setting
           const blockProperties: Record<string, any> = {}
-          if (journalPageId) {
-            blockProperties[datePropertyKey] = usePropertyFallback
-              ? `[[${dateString}]]`
-              : journalPageId
+          if (dateString) {
+            blockProperties[managedKeys.date] = dateString
           }
           if (url) {
-            blockProperties[urlPropertyKey] = url
+            blockProperties[managedKeys.url] = url
           }
 
-          // Create block with properties in one operation (reduces 4 calls to 2)
           const newBlock = await logseq.Editor.appendBlockInPage(page.uuid, block.content, {
             properties: blockProperties,
           })
@@ -364,7 +441,6 @@ async function insertBookmarksWithTags(blocks: BookmarkBlock[], _blockUuid: stri
             continue
           }
 
-          // Tag the block (separate operation - no batch API available)
           if (tag) {
             try {
               await logseq.Editor.addBlockTag(newBlock.uuid, tag.uuid)
@@ -520,6 +596,30 @@ async function main() {
     logseq.Editor.registerSlashCommand('Karakeep: Retrieve Bookmarks', async (e) => {
       await retrieveAndInsert(e.uuid)
     })
+    logseq.Editor.registerSlashCommand('Karakeep: Migrate Current Bookmark', async () => {
+      await migrateCurrentBookmark()
+    })
+    logseq.Editor.registerSlashCommand('Karakeep: Migrate 10 Bookmarks', async () => {
+      await migrateLegacyBookmarks(10)
+    })
+    logseq.App.registerCommandPalette(
+      {
+        key: 'karakeep-migrate-current-bookmark',
+        label: 'Karakeep: Migrate Current Bookmark',
+      },
+      async () => {
+        await migrateCurrentBookmark()
+      }
+    )
+    logseq.App.registerCommandPalette(
+      {
+        key: 'karakeep-migrate-10-bookmarks',
+        label: 'Karakeep: Migrate 10 Bookmarks',
+      },
+      async () => {
+        await migrateLegacyBookmarks(10)
+      }
+    )
 
     console.log('[Karakeep] ✓ Slash commands registered')
 

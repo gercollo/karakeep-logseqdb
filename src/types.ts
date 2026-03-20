@@ -144,6 +144,11 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 export const URL_PROPERTY = DEFAULT_SETTINGS.urlPropertyName
 export const DATE_PROPERTY = DEFAULT_SETTINGS.datePropertyName
 export const BOOKMARKS_TAG = DEFAULT_SETTINGS.bookmarkTagName
+export const PLUGIN_ID = 'logseq-karakeep-plugin'
+
+export function getPluginPropertyIdent(propertyName: string): string {
+  return `:plugin.property.${PLUGIN_ID}/${propertyName}`
+}
 
 // Block structure for insertion
 export interface BookmarkBlock {

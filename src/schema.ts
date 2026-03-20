@@ -1,9 +1,8 @@
 /**
- * Schema initialization for properties and tags
- * Following logseq-db-plugin-api-skill best practices
+ * Schema initialization for properties and tags.
  */
 
-import { URL_PROPERTY, DATE_PROPERTY, BOOKMARKS_TAG } from './types'
+import { URL_PROPERTY, DATE_PROPERTY, BOOKMARKS_TAG, getPluginPropertyIdent } from './types'
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -30,15 +29,6 @@ function identMatchesProperty(ident: unknown, propertyName: string): boolean {
   return baseName === propertyName || tail === propertyName || withoutColon === propertyName
 }
 
-/**
- * Initialize property type definitions
- * date and url are added to tag schema only — Logseq creates them
- * automatically in the :user.property/ namespace.
- */
-export async function initializeProperties(): Promise<void> {
-  console.log('[Karakeep] Properties will be initialized via tag schema only')
-}
-
 interface SchemaConfig {
   tagName: string
   urlPropertyName: string
@@ -48,26 +38,76 @@ interface SchemaConfig {
 }
 
 /**
- * Initialize Bookmarks tag with property schema
- * Creates the tag if it doesn't exist and adds properties to its schema
- * Only adds properties if they don't already exist
+ * Ensure Karakeep-managed properties exist and return their actual idents.
+ */
+export async function ensureManagedPropertyIdents(
+  config?: Partial<SchemaConfig>
+): Promise<{ url: string; date: string }> {
+  try {
+    const urlPropertyName = config?.urlPropertyName || URL_PROPERTY
+    const datePropertyName = config?.datePropertyName || DATE_PROPERTY
+    const urlPropertyIdentOverride = config?.urlPropertyIdentOverride?.trim()
+    const datePropertyIdentOverride = config?.datePropertyIdentOverride?.trim()
+
+    if (urlPropertyIdentOverride && datePropertyIdentOverride) {
+      return {
+        url: urlPropertyIdentOverride,
+        date: datePropertyIdentOverride,
+      }
+    }
+
+    await logseq.Editor.upsertProperty(urlPropertyName, {
+      type: 'url',
+      cardinality: 'one',
+      hide: true,
+      public: false,
+    })
+    await logseq.Editor.upsertProperty(datePropertyName, {
+      type: 'default',
+      cardinality: 'one',
+      hide: true,
+      public: false,
+    })
+
+    const managedUrlProperty = await logseq.Editor.getProperty(urlPropertyName)
+    const managedDateProperty = await logseq.Editor.getProperty(datePropertyName)
+
+    return {
+      url:
+        urlPropertyIdentOverride ||
+        normalizeIdent(managedUrlProperty?.['ident']) ||
+        getPluginPropertyIdent(urlPropertyName),
+      date:
+        datePropertyIdentOverride ||
+        normalizeIdent(managedDateProperty?.['ident']) ||
+        getPluginPropertyIdent(datePropertyName),
+    }
+  } catch (error) {
+    console.error('[Karakeep] Error ensuring managed properties:', error)
+    return {
+      url: getPluginPropertyIdent(config?.urlPropertyName || URL_PROPERTY),
+      date: getPluginPropertyIdent(config?.datePropertyName || DATE_PROPERTY),
+    }
+  }
+}
+
+/**
+ * Initialize Bookmarks tag with plugin-owned property schema.
  */
 export async function initializeBookmarksTag(config?: Partial<SchemaConfig>): Promise<void> {
   try {
     const tagName = config?.tagName || BOOKMARKS_TAG
     const urlPropertyName = config?.urlPropertyName || URL_PROPERTY
     const datePropertyName = config?.datePropertyName || DATE_PROPERTY
-    const urlPropertyIdentOverride = config?.urlPropertyIdentOverride?.trim()
-    const datePropertyIdentOverride = config?.datePropertyIdentOverride?.trim()
 
     console.log('[Karakeep] ===== INITIALIZING BOOKMARKS TAG SCHEMA =====')
 
-    // Create or get the bookmarks tag
     let tag = await logseq.Editor.getTag(tagName)
     console.log('[Karakeep] getTag result:', tag)
 
     if (!tag) {
-      tag = await logseq.Editor.createTag(tagName)
+      await logseq.Editor.createTag(tagName)
+      tag = await logseq.Editor.getTag(tagName)
       console.log(`[Karakeep] Created #${tagName} tag:`, tag)
     }
 
@@ -76,58 +116,18 @@ export async function initializeBookmarksTag(config?: Partial<SchemaConfig>): Pr
       return
     }
 
-    console.log('[Karakeep] Tag UUID:', tag.uuid, 'Tag ID:', tag.id)
+    await ensureManagedPropertyIdents(config)
 
-    // Get existing properties to check if we've already added them
-    const tagData = await logseq.DB.datascriptQuery(
-      `[:find (pull ?t [:block/properties *1]) :where [?t :block/uuid "${tag.uuid}"]]`
-    )
-
-    console.log('[Karakeep] Tag properties query result:', tagData)
-
-    // Result format: [[{:block/properties {...}}]]
-    const existingProps = tagData[0]?.[0]?.[':block/properties'] || {}
-    console.log('[Karakeep] Existing properties:', existingProps)
-
-    // Check if properties already exist
-    const hasDatePropByName = Object.values(existingProps).some((p: any) =>
-      identMatchesProperty(p?.[':db/ident'], datePropertyName)
-    )
-    const hasUrlPropByName = Object.values(existingProps).some((p: any) =>
-      identMatchesProperty(p?.[':db/ident'], urlPropertyName)
-    )
-
-    // If user provides explicit property ident override, trust it and skip property auto-creation.
-    const hasDateProp = !!datePropertyIdentOverride || hasDatePropByName
-    const hasUrlProp = !!urlPropertyIdentOverride || hasUrlPropByName
-
-    console.log('[Karakeep] hasDateProp:', hasDateProp, 'hasUrlProp:', hasUrlProp)
-
-    // Use the proper plugin API: logseq.Editor.addTagProperty
-    // Add date property if it doesn't exist
-    if (!hasDateProp) {
-      console.log('[Karakeep] Adding date property using logseq.Editor.addTagProperty...')
-      try {
-        await logseq.Editor.addTagProperty(tag.uuid, datePropertyName)
-        console.log('[Karakeep] ✓ Added date property to tag schema')
-      } catch (err) {
-        console.error('[Karakeep] Error adding date property:', err)
-      }
-    } else {
-      console.log('[Karakeep] Date property already exists')
+    try {
+      await logseq.Editor.addTagProperty(tag.uuid, datePropertyName)
+    } catch (err) {
+      console.log('[Karakeep] Date property already attached or unavailable:', err)
     }
 
-    // Add url property if it doesn't exist
-    if (!hasUrlProp) {
-      console.log('[Karakeep] Adding url property using logseq.Editor.addTagProperty...')
-      try {
-        await logseq.Editor.addTagProperty(tag.uuid, urlPropertyName)
-        console.log('[Karakeep] ✓ Added url property to tag schema')
-      } catch (err) {
-        console.error('[Karakeep] Error adding url property:', err)
-      }
-    } else {
-      console.log('[Karakeep] URL property already exists')
+    try {
+      await logseq.Editor.addTagProperty(tag.uuid, urlPropertyName)
+    } catch (err) {
+      console.log('[Karakeep] URL property already attached or unavailable:', err)
     }
 
     console.log('[Karakeep] ===== TAG SCHEMA INITIALIZATION COMPLETE =====')
@@ -140,7 +140,7 @@ export async function initializeBookmarksTag(config?: Partial<SchemaConfig>): Pr
  * Complete schema initialization
  */
 export async function initializeSchema(config?: Partial<SchemaConfig>): Promise<void> {
-  await initializeProperties()
+  await ensureManagedPropertyIdents(config)
   await initializeBookmarksTag(config)
 }
 
