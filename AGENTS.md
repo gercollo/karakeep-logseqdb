@@ -38,6 +38,14 @@
   - dedupe/backfill
 - If a change affects Logseq property semantics, assume runtime verification matters more than static reasoning.
 
+## CI/CD
+- GitHub Actions CI runs on PRs to `main` and `develop`: typecheck, lint, build, and uploads a `plugin-build` artifact.
+- The `publish.yml` workflow runs on GitHub releases: builds, packages `plugin.zip`, and attaches it to the release.
+
+## Branch Strategy
+- `main` is the release branch. `develop` is the integration branch.
+- Create feature/fix branches off `develop` and open PRs against `develop`.
+
 ## Engineering Constraints
 - Do not broaden the configurable surface without a strong reason. More property/config flexibility created most of the earlier regressions.
 - Favor a single supported path over compatibility branches unless the user explicitly asks for migration or legacy support.
