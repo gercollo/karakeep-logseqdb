@@ -555,13 +555,13 @@ function registerToolbarItem(): void {
   `)
 
   logseq.App.registerUIItem('toolbar', {
-    key: 'karakeep-retrieve-bookmarks-toolbar',
+    key: 'karakeep-sync',
     template: `
       <a
         class="button karakeep-toolbar-button"
         data-on-click="onKarakeepToolbarClick"
-        title="Karakeep: Retrieve Bookmarks"
-        aria-label="Karakeep: Retrieve Bookmarks"
+        title="Karakeep Sync"
+        aria-label="Karakeep Sync"
       >
         ${getToolbarIconSvg()}
       </a>
