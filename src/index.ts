@@ -523,6 +523,47 @@ async function retrieveAndInsert(blockUuid: string): Promise<void> {
 /**
  * Main plugin initialization
  */
+function getToolbarIconSvg(): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 1.1 512.1 509.8" aria-hidden="true">
+    <path fill="currentColor" d="M481.7 1.1H30.3C13.6 1.1 0 14.6 0 31.4v449.2c0 16.7 13.5 30.3 30.3 30.3h451.5c16.7 0 30.3-13.5 30.3-30.3V31.4c-.1-16.7-13.6-30.3-30.4-30.3M223.7 436c0 4.4-3.5 7.9-7.9 7.9H76.6c-4.4 0-7.9-3.5-7.9-7.9V74.4c0-4.4 3.5-7.9 7.9-7.9h137c4.4 0 7.9 3.5 7.9 7.9V212s-.8 59.2 2.2 105.7zm217.4 0c0 6.3-7 10-12.2 6.6l-63.5-41.5c-2.7-1.8-6.3-1.7-9 .2l-55.6 40.2c-2.3 1.7-5 1.8-7.4 1-2-1.4-3.4-3.8-3.4-6.5V155.2c7.5-1.4 15.9-2.3 25.6-2.3 47.5 0 125.4 26.9 125.4 102.6z"/>
+  </svg>`
+}
+
+function registerToolbarItem(): void {
+  logseq.provideModel({
+    async onKarakeepToolbarClick() {
+      await retrieveAndInsert('')
+    },
+  })
+
+  logseq.provideStyle(`
+    .karakeep-toolbar-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .karakeep-toolbar-button svg {
+      width: 1.1em;
+      height: 1.1em;
+    }
+  `)
+
+  logseq.App.registerUIItem('toolbar', {
+    key: 'karakeep-retrieve-bookmarks-toolbar',
+    template: `
+      <a
+        class="button karakeep-toolbar-button"
+        data-on-click="onKarakeepToolbarClick"
+        title="Karakeep: Retrieve Bookmarks"
+        aria-label="Karakeep: Retrieve Bookmarks"
+      >
+        ${getToolbarIconSvg()}
+      </a>
+    `,
+  })
+}
+
 async function main() {
   console.log('[Karakeep] ==================================================')
   console.log('[Karakeep] PLUGIN LOADING STARTED')
@@ -557,8 +598,9 @@ async function main() {
         await retrieveAndInsert('')
       }
     )
+    registerToolbarItem()
 
-    console.log('[Karakeep] ✓ Slash commands registered')
+    console.log('[Karakeep] ✓ Slash commands and toolbar item registered')
 
     console.log('[Karakeep] Step 4: Setting up auto-sync...')
     // 4. Set up auto-sync if enabled
