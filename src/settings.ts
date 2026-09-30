@@ -81,6 +81,7 @@ export function registerSettings(): void {
     logseq.useSettingsSchema(settings)
   } catch (error) {
     console.error('[Karakeep] Error registering settings:', error)
+    throw error
   }
 }
 
