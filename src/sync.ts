@@ -13,6 +13,7 @@ export interface SyncResult {
 
 interface ExistingBookmark {
   uuid: string
+  content: string
   tagged: boolean
   url: string | null
   managedUrl: string | null
@@ -80,7 +81,7 @@ async function readBookmarkIndex(tagId: number, urlIdent: string, dateIdent: str
   // @logseq/libs 0.2.9 drops the last extra query input. Use the validated
   // numeric entity ID directly so this read works through that SDK as well.
   const rows: unknown = await logseq.DB.datascriptQuery(
-    `[:find (pull ?b [:block/uuid :block/title {:block/tags [:db/id]}
+    `[:find (pull ?b [:block/uuid :block/title :block/order {:block/parent [:db/id]} {:block/tags [:db/id]}
                       ${projection} {${queryIdent(dateIdent)} [:db/id]}])
       :where (or [?b :block/tags ${tagId}] [?b :block/parent ${tagId}])]`
   )
@@ -88,6 +89,7 @@ async function readBookmarkIndex(tagId: number, urlIdent: string, dateIdent: str
   const byUuid = new Map<string, ExistingBookmark>()
   const byUrl = new Map<string, ExistingBookmark>()
   const byContent = new Map<string, ExistingBookmark>()
+  let lastChild: { uuid: string; order: string } | undefined
   for (const row of rows) {
     const block = entity(Array.isArray(row) ? row[0] : null)
     if (typeof block.uuid !== 'string') throw new Error('Invalid bookmark query result')
@@ -98,11 +100,18 @@ async function readBookmarkIndex(tagId: number, urlIdent: string, dateIdent: str
     const dateId = entity(block[dateIdent]).id
     const record: ExistingBookmark = {
       uuid: block.uuid,
+      content: typeof block.title === 'string' ? block.title : '',
       tagged: tags.some((tag) => entity(tag).id === tagId),
       url: url || null,
       managedUrl,
       dateId: typeof dateId === 'number' ? dateId : null,
     }
+    if (
+      entity(block.parent).id === tagId &&
+      typeof block.order === 'string' &&
+      (!lastChild || block.order > lastChild.order)
+    )
+      lastChild = { uuid: record.uuid, order: block.order }
     byUuid.set(record.uuid, record)
     if (record.url && typeof block.title === 'string') {
       byContent.set(JSON.stringify([record.url, block.title]), record)
@@ -115,7 +124,7 @@ async function readBookmarkIndex(tagId: number, urlIdent: string, dateIdent: str
       if (!previous || score(record) > score(previous)) byUrl.set(record.url, record)
     }
   }
-  return { byUuid, byUrl, byContent }
+  return { byUuid, byUrl, byContent, lastChildUuid: lastChild?.uuid }
 }
 
 export async function insertBookmarks(
@@ -155,6 +164,23 @@ export async function insertBookmarks(
   let checkpointSize = syncedIds.size
   const completedIds = new Set<string>()
   const journals = new Map<string, number>()
+  let insertionAnchor = index.lastChildUuid
+  const resolveJournal = async (dateString: string): Promise<number> => {
+    const cached = journals.get(dateString)
+    if (cached) return cached
+    let journal = await logseq.Editor.getPage(dateString)
+    assertActive()
+    if (!journal) {
+      await write(() =>
+        logseq.Editor.createPage(dateString, {}, { journal: true, redirect: false })
+      )
+      journal = await logseq.Editor.getPage(dateString)
+      assertActive()
+    }
+    if (!journal?.id) throw new Error(`Could not resolve journal ${dateString}`)
+    journals.set(dateString, journal.id)
+    return journal.id
+  }
   let lastProgressTime = 0
   let lastCheckpointTime = Date.now()
   let lastYieldTime = Date.now()
@@ -189,70 +215,60 @@ export async function insertBookmarks(
             ? index.byUrl.get(url)
             : index.byContent.get(JSON.stringify([url, block.content]))
           : undefined
-        let created = false
+        let newUuid: string | undefined
         if (!record) {
           const uuid = await bookmarkUUID(tag.uuid, settings.karakeepInstanceUrl, id)
           assertActive()
           record = index.byUuid.get(uuid)
+          if (!record) newUuid = uuid
+        }
+        const complete =
+          record?.tagged && (!url || !!record.managedUrl) && (!block.dateString || !!record.dateId)
+        if (complete) {
+          result.skipped++
+        } else {
+          // Resolve the date before creation so a journal failure cannot leave a bare link.
+          const dateId =
+            record?.dateId || (block.dateString ? await resolveJournal(block.dateString) : null)
           if (!record) {
-            // insertBlock appends at the end without appendBlockInPage's full-child scan.
+            // The page-target API loads every child before inserting. Once a last
+            // child exists, insert after that block and advance the anchor instead.
             const newBlock = await write(() =>
-              logseq.Editor.insertBlock(tag.uuid, block.content, {
-                sibling: false,
+              logseq.Editor.insertBlock(insertionAnchor || tag!.uuid, block.content, {
+                sibling: !!insertionAnchor,
                 end: true,
-                customUUID: uuid,
+                customUUID: newUuid!,
               })
             )
             if (!newBlock?.uuid) throw new Error('Logseq did not return the created bookmark')
-            record = { uuid: newBlock.uuid, tagged: false, url, managedUrl: null, dateId: null }
+            insertionAnchor = newBlock.uuid
+            record = {
+              uuid: newBlock.uuid,
+              content: typeof newBlock.title === 'string' ? newBlock.title : block.content,
+              tagged: false,
+              url,
+              managedUrl: null,
+              dateId: null,
+            }
             index.byUuid.set(record.uuid, record)
             if (url) {
               if (urlDedupe) index.byUrl.set(url, record)
               index.byContent.set(JSON.stringify([url, block.content]), record)
             }
-            created = true
           }
-        }
-        const complete =
-          record.tagged && (!url || !!record.managedUrl) && (!block.dateString || !!record.dateId)
-        if (complete) {
-          result.skipped++
-        } else {
-          // These writes remain separate and sequential to respect Logseq DB semantics.
-          if (!record.tagged) {
-            await write(() => logseq.Editor.addBlockTag(record!.uuid, tag!.uuid))
-            record.tagged = true
-          }
-          if (url && !record.managedUrl) {
-            await write(() =>
-              logseq.Editor.upsertBlockProperty(record!.uuid, managed.urlWriteKey, url)
-            )
-            record.managedUrl = url
-          }
-          if (block.dateString && !record.dateId) {
-            const dateString = block.dateString
-            let journalId = journals.get(dateString)
-            if (!journalId) {
-              let journal = await logseq.Editor.getPage(dateString)
-              assertActive()
-              if (!journal) {
-                await write(() =>
-                  logseq.Editor.createPage(dateString, {}, { journal: true, redirect: false })
-                )
-                journal = await logseq.Editor.getPage(dateString)
-                assertActive()
-              }
-              if (!journal?.id) throw new Error(`Could not resolve journal ${dateString}`)
-              journalId = journal.id
-              journals.set(dateString, journalId)
-            }
-            const value = journalId
-            await write(() =>
-              logseq.Editor.upsertBlockProperty(record!.uuid, managed.dateWriteKey, value)
-            )
-            record.dateId = value
-          }
-          if (created) result.inserted++
+          const properties: Record<string, unknown> = {}
+          if (!record.tagged) properties['block/tags'] = [tag!.id]
+          if (url && !record.managedUrl) properties[managed.url.slice(1)] = url
+          if (dateId && !record.dateId) properties[managed.date.slice(1)] = dateId
+          // updateBlock's properties are one awaited set-block-properties transaction.
+          // Keep the original title, so Logseq's unchanged-title save is a no-op.
+          await write(() =>
+            logseq.Editor.updateBlock(record!.uuid, record!.content, { properties })
+          )
+          record.tagged = true
+          if (url && !record.managedUrl) record.managedUrl = url
+          if (dateId && !record.dateId) record.dateId = dateId
+          if (newUuid) result.inserted++
           else result.repaired++
         }
         // syncedIds is a checkpoint/hint, not evidence that this graph has the node.
