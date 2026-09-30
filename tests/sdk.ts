@@ -8,6 +8,13 @@ interface SDKEntry {
     base: object,
     caller: object
   ) => {
+    Editor: {
+      updateBlock: (
+        uuid: string,
+        content: string,
+        opts: { properties: Record<string, unknown> }
+      ) => Promise<void>
+    }
     DB: { datascriptQuery: (query: string, ...inputs: unknown[]) => Promise<unknown> }
   }
 }
@@ -44,4 +51,30 @@ export function sdkQuery(execute: (query: string, ...inputs: unknown[]) => Promi
     }
   )
   return (query: string, ...inputs: unknown[]) => instance.DB.datascriptQuery(query, ...inputs)
+}
+
+export function sdkUpdate(
+  execute: (
+    uuid: string,
+    content: string,
+    opts: { properties: Record<string, unknown> }
+  ) => Promise<void>
+) {
+  const instance = sdk.setupPluginUserInstance(
+    {},
+    {
+      on: () => {},
+      _extendUserModel: () => {},
+      callAsync: async (
+        event: string,
+        payload: { method: string; args: [string, string, { properties: Record<string, unknown> }] }
+      ) => {
+        assert.equal(event, 'api:call')
+        assert.equal(payload.method, 'updateBlock')
+        return execute(...payload.args)
+      },
+    }
+  )
+  return (uuid: string, content: string, opts: { properties: Record<string, unknown> }) =>
+    instance.Editor.updateBlock(uuid, content, opts)
 }
