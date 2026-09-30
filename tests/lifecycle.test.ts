@@ -37,7 +37,7 @@ function rawBookmark(id = 'one') {
   }
 }
 
-async function fixture(fetchPage?: () => Promise<Response>) {
+async function fixture(fetchPage?: () => Promise<Response>, configure?: (mock: any) => void) {
   const graph = testGraph()
   const messages = new Map<string, string>()
   const history: string[] = []
@@ -91,6 +91,7 @@ async function fixture(fetchPage?: () => Promise<Response>) {
     await update(next)
     settingsChanged({ ...mock.settings }, previous)
   }
+  configure?.(mock)
   const context = {
     logseq: mock,
     crypto: globalThis.crypto,
@@ -217,4 +218,72 @@ test('a graph switch during HTTP fetching aborts the import before any new nodes
   assert.equal(f.graph.counts.inserts, 0)
   assert.ok(f.history.some((message) => message.includes('active graph changed')))
   await f.unload()
+})
+
+test('startup registers commands without requiring a ready graph or touching schema', async () => {
+  const f = await fixture(undefined, (mock) => {
+    mock.Editor.getTag = async () => {
+      throw new Error('Graph is not ready')
+    }
+    mock.Editor.addTagProperty = async () => {
+      throw new Error('Startup must not write schema')
+    }
+  })
+  assert.equal(typeof f.manual, 'function')
+  assert.equal(f.graph.counts.propertyReads + f.graph.counts.propertyCreates, 0)
+  assert.equal(f.graph.counts.queries, 0)
+  assert.equal(f.requests(), 0)
+  assert.equal(f.history.length, 0)
+  await f.manual()
+  assert.ok(f.history.includes('Sync failed: Graph is not ready'))
+  assert.equal(f.graph.counts.inserts, 0)
+  await f.unload()
+})
+
+test('startup errors expose the failed stage and exception, including async toolbar failures', async () => {
+  const f = await fixture(undefined, (mock) => {
+    mock.App.registerUIItem = async () => {
+      throw new Error('Synthetic toolbar unavailable')
+    }
+  })
+  assert.ok(
+    f.history.includes(
+      'Plugin initialization failed (registering toolbar): Synthetic toolbar unavailable'
+    )
+  )
+  assert.equal(f.timers.size, 0)
+  await f.unload()
+})
+
+test('settings registration errors are surfaced instead of swallowed', async () => {
+  const f = await fixture(undefined, (mock) => {
+    mock.useSettingsSchema = () => {
+      throw new Error('Synthetic settings unavailable')
+    }
+  })
+  assert.ok(
+    f.history.includes(
+      'Plugin initialization failed (registering settings): Synthetic settings unavailable'
+    )
+  )
+  assert.equal(f.requests(), 0)
+  await f.unload()
+})
+
+test('unloading while toolbar registration is pending cannot start background sync', async () => {
+  const f = await fixture(undefined, (mock) => {
+    mock.settings.autoSyncEnabled = true
+    const beforeunload = mock.beforeunload
+    let unload!: () => Promise<void>
+    mock.beforeunload = (callback: () => Promise<void>) => {
+      beforeunload(callback)
+      unload = callback
+    }
+    mock.App.registerUIItem = async () => {
+      await unload()
+    }
+  })
+  assert.equal(f.timers.size, 0)
+  assert.equal(f.requests(), 0)
+  assert.equal(f.history.length, 0)
 })

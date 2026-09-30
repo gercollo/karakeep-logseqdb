@@ -50,3 +50,48 @@ test('schema initialization also stops after a graph change', async () => {
   )
   assert.equal(graph.counts.propertyReads + graph.counts.propertyCreates, 0)
 })
+
+test('an existing class schema is reused without any property attachment writes', async () => {
+  const graph = testGraph()
+  const getTag = graph.mock.Editor.getTag
+  const getProperty = graph.mock.Editor.getProperty
+  graph.mock.Editor.getTag = async () => ({
+    ...(await getTag()),
+    ':logseq.property.class/properties': [84990, 84991, 72],
+  })
+  graph.mock.Editor.getProperty = async (name) => ({
+    ...(await getProperty(name)),
+    id: name === 'bookmark_url' ? 84991 : 84990,
+  })
+  Object.assign(graph.mock.Editor, {
+    addTagProperty: async () => {
+      throw new Error('Existing schema must not be rewritten')
+    },
+  })
+  await initializeBookmarksTag()
+  assert.equal(graph.counts.propertyReads, 2)
+  assert.equal(graph.counts.propertyCreates, 0)
+})
+
+test('only a missing class property is attached using its qualified ident', async () => {
+  const graph = testGraph()
+  const getTag = graph.mock.Editor.getTag
+  const getProperty = graph.mock.Editor.getProperty
+  graph.mock.Editor.getTag = async () => ({
+    ...(await getTag()),
+    ':logseq.property.class/properties': [84990, 72],
+  })
+  graph.mock.Editor.getProperty = async (name) => ({
+    ...(await getProperty(name)),
+    id: name === 'bookmark_url' ? 84991 : 84990,
+  })
+  const attached: unknown[][] = []
+  Object.assign(graph.mock.Editor, {
+    addTagProperty: async (...args: unknown[]) => {
+      attached.push(args)
+    },
+  })
+  await initializeBookmarksTag()
+  assert.deepEqual(attached, [[(await getTag()).uuid, (await getProperty('bookmark_url')).ident]])
+  assert.equal(graph.counts.propertyCreates, 0)
+})
