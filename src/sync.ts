@@ -40,7 +40,7 @@ function contentUrl(value: unknown): string | null {
 }
 
 function queryIdent(ident: string): string {
-  // Property metadata is inserted into EDN; names and user input are bound separately.
+  // Only validated property idents are interpolated into EDN.
   if (!/^:[\w.-]+\/[\w.-]+$/.test(ident)) throw new Error('Invalid managed property ident')
   return ident
 }
@@ -65,6 +65,7 @@ export async function bookmarkUUID(
  * A failed read aborts the import rather than silently disabling deduplication.
  */
 async function readBookmarkIndex(tagId: number, urlIdent: string, dateIdent: string) {
+  if (!Number.isSafeInteger(tagId) || tagId <= 0) throw new Error('Invalid Bookmarks tag entity ID')
   const legacyRows: unknown = await logseq.DB.datascriptQuery(
     '[:find ?ident :where [?p :db/ident ?ident] [?p :block/title "url"]]'
   )
@@ -76,12 +77,12 @@ async function readBookmarkIndex(tagId: number, urlIdent: string, dateIdent: str
     )
   const urlIdents = [...new Set([urlIdent, ...legacyIdents])]
   const projection = urlIdents.map((ident) => `{${queryIdent(ident)} [:block/title]}`).join(' ')
+  // @logseq/libs 0.2.9 drops the last extra query input. Use the validated
+  // numeric entity ID directly so this read works through that SDK as well.
   const rows: unknown = await logseq.DB.datascriptQuery(
     `[:find (pull ?b [:block/uuid :block/title {:block/tags [:db/id]}
                       ${projection} {${queryIdent(dateIdent)} [:db/id]}])
-      :in $ ?tag
-      :where (or [?b :block/tags ?tag] [?b :block/parent ?tag])]`,
-    tagId
+      :where (or [?b :block/tags ${tagId}] [?b :block/parent ${tagId}])]`
   )
   if (!Array.isArray(rows)) throw new Error('Could not read existing bookmarks')
   const byUuid = new Map<string, ExistingBookmark>()
