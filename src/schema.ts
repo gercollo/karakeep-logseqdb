@@ -37,6 +37,7 @@ interface SchemaConfig {
 interface ResolvedPropertyRef {
   ident: string
   tagRef: string
+  id?: number
   writeKey: string
 }
 
@@ -64,7 +65,8 @@ async function resolvePropertyRef(
 
   return {
     ident: normalizeIdent(managedProperty?.['ident']) || getPluginPropertyIdent(propertyName),
-    tagRef: managedProperty?.uuid || propertyName,
+    tagRef: normalizeIdent(managedProperty?.['ident']) || getPluginPropertyIdent(propertyName),
+    id: managedProperty.id,
     writeKey: String(managedProperty?.name || propertyName),
   }
 }
@@ -102,14 +104,12 @@ export async function initializeBookmarksTag(config?: Partial<SchemaConfig>): Pr
 
     let tag = await logseq.Editor.getTag(tagName)
     assertActive()
-    console.log('[Karakeep] getTag result:', tag)
 
     if (!tag) {
       await logseq.Editor.createTag(tagName)
       assertActive()
       tag = await logseq.Editor.getTag(tagName)
       assertActive()
-      console.log(`[Karakeep] Created #${tagName} tag:`, tag)
     }
 
     if (!tag) {
@@ -118,10 +118,14 @@ export async function initializeBookmarksTag(config?: Partial<SchemaConfig>): Pr
 
     const managedUrlProperty = await resolvePropertyRef(URL_PROPERTY, assertActive)
     const managedDateProperty = await resolvePropertyRef(DATE_PROPERTY, assertActive)
-    await logseq.Editor.addTagProperty(tag.uuid, managedDateProperty.tagRef)
-    assertActive()
-    await logseq.Editor.addTagProperty(tag.uuid, managedUrlProperty.tagRef)
-    assertActive()
+    // SDK property references are entity IDs; reuse the existing class schema.
+    const refs = tag[':logseq.property.class/properties']
+    const attached = new Set(Array.isArray(refs) ? refs : [])
+    for (const property of [managedDateProperty, managedUrlProperty]) {
+      if (property.id !== undefined && attached.has(property.id)) continue
+      await logseq.Editor.addTagProperty(tag.uuid, property.tagRef)
+      assertActive()
+    }
 
     console.log('[Karakeep] ===== TAG SCHEMA INITIALIZATION COMPLETE =====')
   } catch (error) {

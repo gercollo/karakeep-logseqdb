@@ -11,7 +11,7 @@
 import '@logseq/libs'
 
 import { registerSettings, getSettings } from './settings'
-import { initializeSchema } from './schema'
+import { initializeBookmarksTag } from './schema'
 import { createAPIClient, bookmarkFilters } from './api/karakeep'
 import { buildBookmarkBlocks } from './logic'
 import type { BookmarkBlock } from './types'
@@ -102,6 +102,8 @@ async function retrieveAndInsert(_blockUuid: string, silent = false): Promise<vo
     }
     const blocks = await buildBookmarkBlocks(bookmarks, settings)
     assertActive()
+    await initializeBookmarksTag({ tagName: settings.bookmarkTagName, assertActive })
+    assertActive()
     const result = await insertBookmarksWithTags(blocks, settings, assertActive, silent)
     assertActive()
     if (!silent || result.failed) {
@@ -110,7 +112,7 @@ async function retrieveAndInsert(_blockUuid: string, silent = false): Promise<vo
     console.log('[Karakeep] Sync completed:', summary(result))
   } catch (error) {
     console.error('[Karakeep] Sync failed:', error)
-    if (!unloaded) await logseq.UI.showMsg(`Sync failed: ${(error as Error).message}`, 'error')
+    if (!unloaded) await logseq.UI.showMsg(`Sync failed: ${errorMessage(error)}`, 'error')
   } finally {
     if (fetchingMessage !== null) logseq.UI.closeMsg(fetchingMessage)
     syncInProgress = false
@@ -120,40 +122,81 @@ async function retrieveAndInsert(_blockUuid: string, silent = false): Promise<vo
 /**
  * Main plugin initialization
  */
-async function main() {
-  console.log('[Karakeep] ==================================================')
-  console.log('[Karakeep] PLUGIN LOADING STARTED')
-  console.log('[Karakeep] ==================================================')
+function getToolbarIconSvg(): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 1.1 512.1 509.8" aria-hidden="true" class="ti">
+    <path fill="currentColor" d="M481.7 1.1H30.3C13.6 1.1 0 14.6 0 31.4v449.2c0 16.7 13.5 30.3 30.3 30.3h451.5c16.7 0 30.3-13.5 30.3-30.3V31.4c-.1-16.7-13.6-30.3-30.4-30.3M223.7 436c0 4.4-3.5 7.9-7.9 7.9H76.6c-4.4 0-7.9-3.5-7.9-7.9V74.4c0-4.4 3.5-7.9 7.9-7.9h137c4.4 0 7.9 3.5 7.9 7.9V212s-.8 59.2 2.2 105.7zm217.4 0c0 6.3-7 10-12.2 6.6l-63.5-41.5c-2.7-1.8-6.3-1.7-9 .2l-55.6 40.2c-2.3 1.7-5 1.8-7.4 1-2-1.4-3.4-3.8-3.4-6.5V155.2c7.5-1.4 15.9-2.3 25.6-2.3 47.5 0 125.4 26.9 125.4 102.6z"/>
+  </svg>`
+}
 
+async function registerToolbarItem(): Promise<void> {
+  logseq.provideModel({
+    async onKarakeepToolbarClick() {
+      await retrieveAndInsert('')
+    },
+  })
+
+  logseq.provideStyle(`
+    .karakeep-toolbar-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      line-height: 1;
+    }
+
+    .karakeep-toolbar-button svg {
+      display: block;
+      width: 18px;
+      height: 18px;
+      min-width: 18px;
+      min-height: 18px;
+    }
+  `)
+
+  await logseq.App.registerUIItem('toolbar', {
+    key: 'karakeep-sync',
+    template: `
+      <a
+        class="button karakeep-toolbar-button"
+        data-on-click="onKarakeepToolbarClick"
+        title="Karakeep Sync"
+        aria-label="Karakeep Sync"
+      >
+        ${getToolbarIconSvg()}
+      </a>
+    `,
+  })
+}
+
+function errorMessage(error: unknown): string {
+  if (typeof error === 'string') return error
+  if (error && typeof error === 'object' && 'message' in error) return String(error.message)
+  return 'Unknown error; see the developer console'
+}
+
+async function main() {
+  let stage = 'registering lifecycle hooks'
   try {
-    console.log('[Karakeep] Step 1: Registering settings...')
-    // Register graph changes before any asynchronous work.
+    // Cleanup must be installed even if a later startup step fails.
+    logseq.beforeunload(async () => {
+      unloaded = true
+      graphEpoch++
+      autoSync.stop()
+    })
     logseq.App.onCurrentGraphChanged(() => {
       graphEpoch++
     })
-    // 1. Register settings
+
+    stage = 'registering settings'
     registerSettings()
-    console.log('[Karakeep] ✓ Settings registered')
 
-    console.log('[Karakeep] Step 2: Initializing schema...')
-    const settings = getSettings()
-    const epoch = graphEpoch
-    // 2. Initialize schema (properties and tag)
-    await initializeSchema({
-      tagName: settings.bookmarkTagName,
-      assertActive: () => {
-        if (unloaded || epoch !== graphEpoch)
-          throw new Error('Graph changed during schema initialization')
-      },
-    })
-    console.log('[Karakeep] ✓ Schema initialized')
-
-    console.log('[Karakeep] Step 3: Registering slash commands...')
-    // 3. Register slash commands
+    // Register the UI without graph reads or schema writes. Schema setup belongs
+    // to a sync, when the graph is available and protected by its epoch guard.
+    stage = 'registering commands'
     logseq.Editor.registerSlashCommand('Karakeep: Retrieve Bookmarks', async (e) => {
       await retrieveAndInsert(e.uuid)
     })
-    logseq.App.registerCommandPalette(
+    await logseq.App.registerCommandPalette(
       {
         key: 'karakeep-retrieve-bookmarks',
         label: 'Karakeep: Retrieve Bookmarks',
@@ -162,14 +205,13 @@ async function main() {
         await retrieveAndInsert('')
       }
     )
+    if (unloaded) return
+    stage = 'registering toolbar'
+    await registerToolbarItem()
 
-    console.log('[Karakeep] ✓ Slash commands registered')
-
-    console.log('[Karakeep] Step 4: Setting up auto-sync...')
-    // 4. Set up auto-sync if enabled
+    if (unloaded) return
+    stage = 'configuring auto-sync'
     updateAutoSync()
-
-    // Listen for settings changes to update auto-sync
     logseq.onSettingsChanged((next, previous) => {
       if (
         next.autoSyncEnabled !== previous.autoSyncEnabled ||
@@ -178,21 +220,14 @@ async function main() {
         updateAutoSync()
       }
     })
-
-    console.log('[Karakeep] ✓ Auto-sync configured')
-    console.log('[Karakeep] ==================================================')
-    console.log('[Karakeep] PLUGIN LOADED SUCCESSFULLY')
-    console.log('[Karakeep] ==================================================')
+    console.log('[Karakeep] Plugin loaded successfully')
   } catch (error) {
-    console.error('[Karakeep] Initialization error:', error)
-    await logseq.UI.showMsg('Plugin initialization failed', 'error')
-  }
-
-  logseq.beforeunload(async () => {
-    unloaded = true
-    graphEpoch++
     autoSync.stop()
-  })
+    if (unloaded) return
+    const message = `Plugin initialization failed (${stage}): ${errorMessage(error)}`
+    console.error('[Karakeep]', message, error)
+    await logseq.UI.showMsg(message, 'error', { timeout: 20000 })
+  }
 }
 
 logseq.ready(main).catch(console.error)
