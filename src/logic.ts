@@ -3,26 +3,8 @@
  * No I/O operations, fully testable
  */
 
-import { getDateForPage } from 'logseq-dateutils'
+import { format } from 'date-fns'
 import type { KarakeepBookmark, BookmarkBlock, PluginSettings } from './types'
-
-/**
- * Get ordinal suffix for day (1st, 2nd, 3rd, 4th, etc.)
- */
-function getOrdinalSuffix(day: number): string {
-  const j = day % 10
-  const k = day % 100
-  if (j === 1 && k !== 11) {
-    return day + 'st'
-  }
-  if (j === 2 && k !== 12) {
-    return day + 'nd'
-  }
-  if (j === 3 && k !== 13) {
-    return day + 'rd'
-  }
-  return day + 'th'
-}
 
 /**
  * Check if a string looks like a UUID (to filter out)
@@ -104,14 +86,19 @@ export async function buildBookmarkBlocks(
 ): Promise<BookmarkBlock[]> {
   const blocks: BookmarkBlock[] = []
 
+  if (bookmarks.length === 0) return blocks
+
   // Get preferred date format (cached by Logseq)
-  const preferredDateFormat = (await logseq.App.getUserConfigs()).preferredDateFormat
+  const preferredDateFormat =
+    (await logseq.App.getUserConfigs()).preferredDateFormat || 'MMM do, yyyy'
+  const dates = new Map<string, string>()
 
   for (const bookmark of bookmarks) {
     // Skip archived based on settings
     if (bookmark.archived && !settings.includeArchived) {
       continue
     }
+    if (settings.includeFavourited && !bookmark.favourited) continue
 
     // Skip bookmarks without a URL we can track
     // This prevents UUID-only entries with no actual content
@@ -139,10 +126,15 @@ export async function buildBookmarkBlocks(
 
     // Format date for property (e.g., "Feb 3rd, 2026")
     const bookmarkDate = new Date(bookmark.createdAt)
-    const month = bookmarkDate.toLocaleDateString('en-US', { month: 'short' })
-    const day = bookmarkDate.getDate()
-    const year = bookmarkDate.getFullYear()
-    const dateString = `${month} ${getOrdinalSuffix(day)}, ${year}`
+    if (Number.isNaN(bookmarkDate.getTime())) {
+      throw new Error(`Invalid creation date for bookmark ${bookmark.id}`)
+    }
+    const dayKey = `${bookmarkDate.getFullYear()}-${bookmarkDate.getMonth()}-${bookmarkDate.getDate()}`
+    let dateString = dates.get(dayKey)
+    if (!dateString) {
+      dateString = format(bookmarkDate, preferredDateFormat)
+      dates.set(dayKey, dateString)
+    }
 
     // Build properties (using simple names, Logseq adds namespace)
     // For date property, we need to get the journal page reference
@@ -160,11 +152,12 @@ export async function buildBookmarkBlocks(
     }
 
     // Store dateString for later use in index.ts
-    const block: BookmarkBlock & { dateString: string; bookmarkId: string } = {
+    const block: BookmarkBlock = {
       content,
       properties,
       dateString,
       bookmarkId: bookmark.id,
+      dedupeByUrl: bookmark.content.type === 'link',
     }
 
     blocks.push(block)

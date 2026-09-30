@@ -4,12 +4,22 @@
  */
 
 import wretch from 'wretch'
-import type { KarakeepPaginatedBookmarks } from '../types'
+import type { KarakeepPaginatedBookmarks, PluginSettings } from '../types'
+
+export function bookmarkFilters(settings: PluginSettings): {
+  archived?: boolean
+  favourited?: boolean
+} {
+  return {
+    archived: settings.includeArchived ? undefined : false,
+    favourited: settings.includeFavourited ? true : undefined,
+  }
+}
 
 /**
  * Karakeep API client class
  */
-class KarakeepAPI {
+export class KarakeepAPI {
   private baseUrl: string
   private token: string
 
@@ -45,37 +55,71 @@ class KarakeepAPI {
     const queryString = params.toString()
     const endpoint = `/api/v1/bookmarks${queryString ? `?${queryString}` : ''}`
 
-    return wretch(this.baseUrl)
-      .auth(`Bearer ${this.token}`)
-      .accept('application/json')
-      .get(endpoint)
-      .json<KarakeepPaginatedBookmarks>()
+    const controller = new AbortController()
+    const timeout = setTimeout(
+      () => controller.abort(new Error('Karakeep request timed out')),
+      30_000
+    )
+    try {
+      return await wretch(this.baseUrl)
+        .auth(`Bearer ${this.token}`)
+        .accept('application/json')
+        .options({ signal: controller.signal })
+        .get(endpoint)
+        .json<KarakeepPaginatedBookmarks>()
+    } finally {
+      clearTimeout(timeout)
+    }
   }
 
   /**
    * Fetch all bookmarks with automatic pagination handling
    */
-  async fetchAllBookmarks(options?: {
-    archived?: boolean
-    favourited?: boolean
-    limit?: number
-  }): Promise<KarakeepPaginatedBookmarks['bookmarks']> {
-    let allBookmarks: KarakeepPaginatedBookmarks['bookmarks'] = []
+  async fetchAllBookmarks(
+    options?: {
+      archived?: boolean
+      favourited?: boolean
+      limit?: number
+    },
+    assertActive: () => void = () => {}
+  ): Promise<KarakeepPaginatedBookmarks['bookmarks']> {
+    const allBookmarks: KarakeepPaginatedBookmarks['bookmarks'] = []
     let cursor: string | undefined
+    const seenCursors = new Set<string>()
+    if (options?.limit !== undefined && (!Number.isInteger(options.limit) || options.limit < 0)) {
+      throw new Error('Bookmark limit must be a non-negative integer')
+    }
+    if (options?.limit === 0) return allBookmarks
 
     do {
+      assertActive()
       const response = await this.getAllBookmarks({
         ...options,
-        limit: 100,
+        limit:
+          options?.limit === undefined ? 100 : Math.min(100, options.limit - allBookmarks.length),
         cursor,
       })
+      assertActive()
 
-      allBookmarks = [...allBookmarks, ...response.bookmarks]
+      if (!Array.isArray(response.bookmarks)) throw new Error('Invalid Karakeep bookmark response')
+      if (response.nextCursor != null && typeof response.nextCursor !== 'string') {
+        throw new Error('Invalid Karakeep pagination cursor')
+      }
+      const remaining =
+        options?.limit === undefined
+          ? response.bookmarks.length
+          : options.limit - allBookmarks.length
+      for (const bookmark of response.bookmarks.slice(0, remaining)) allBookmarks.push(bookmark)
       cursor = response.nextCursor || undefined
 
       // Stop if we hit the limit
-      if (options?.limit && allBookmarks.length >= options.limit) {
+      if (options?.limit !== undefined && allBookmarks.length >= options.limit) {
         break
+      }
+      if (cursor) {
+        if (seenCursors.has(cursor))
+          throw new Error('Karakeep returned a repeated pagination cursor')
+        seenCursors.add(cursor)
       }
     } while (cursor)
 
