@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { bookmarkUUID, insertBookmarks } from '../src/sync'
 import { getSettings } from '../src/settings'
-import { bookmark, testGraph, TAG_UUID, URL_IDENT, DATE_IDENT } from './graph'
+import { bookmark, testGraph, TAG_ID, TAG_UUID, URL_IDENT, DATE_IDENT } from './graph'
 
 test('backfills complete records without per-block property reads or writes', async () => {
   const graph = testGraph()
@@ -208,4 +208,33 @@ test('complete imports store the actual journal reference and managed URL entity
     graph.query(`[:find ?url . :where [?b ${URL_IDENT} ?v] [?v :block/title ?url]]`),
     'https://example.test/one'
   )
+})
+
+test('the real SDK reproduces lost query inputs while bookmark lookup still deduplicates', async () => {
+  const graph = testGraph()
+  graph.addExisting('one')
+  await assert.rejects(
+    graph.mock.DB.datascriptQuery('[:find ?b :in $ ?tag :where [?b :block/tags ?tag]]', TAG_ID),
+    /Too few inputs/
+  )
+  const result = await insertBookmarks([bookmark('one')], getSettings())
+  assert.equal(result.skipped, 1)
+  assert.equal(result.inserted, 0)
+  assert.equal(graph.counts.inserts + graph.counts.tags + graph.counts.urls + graph.counts.dates, 0)
+})
+
+test('a malformed tag entity ID aborts before any query or bookmark write', async () => {
+  for (const id of [NaN, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '74499'] as const) {
+    const graph = testGraph()
+    graph.mock.Editor.getTag = async () => ({ id: id as number, uuid: TAG_UUID })
+    await assert.rejects(
+      insertBookmarks([bookmark('one')], getSettings()),
+      /tag entity ID|resolve the Bookmarks tag/
+    )
+    assert.equal(graph.counts.queries, 0)
+    assert.equal(
+      graph.counts.inserts + graph.counts.tags + graph.counts.urls + graph.counts.dates,
+      0
+    )
+  }
 })

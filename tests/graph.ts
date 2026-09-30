@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module'
+import { sdkQuery } from './sdk'
 import { DEFAULT_SETTINGS, getPluginPropertyIdent, type BookmarkBlock } from '../src/types'
 
 const ds = createRequire(import.meta.url)('datascript')
@@ -143,10 +144,10 @@ export function testGraph(
       Object.assign(settings, next)
     },
     DB: {
-      datascriptQuery: async (query: string, ...inputs: unknown[]) => {
+      datascriptQuery: sdkQuery(async (query: string, ...inputs: unknown[]) => {
         counts.queries++
         return normalize(ds.q(queryForJS(query), db, ...inputs))
-      },
+      }),
     },
     Editor: {
       getTag: async () => ({ id: TAG_ID, uuid: TAG_UUID }),
