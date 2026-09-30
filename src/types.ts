@@ -147,6 +147,8 @@ export interface BookmarkBlock {
   content: string
   properties: Record<string, any>
   bookmarkId?: string
+  dateString?: string
+  dedupeByUrl?: boolean
   children?: BookmarkBlock[]
 }
 
