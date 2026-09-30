@@ -31,6 +31,7 @@ function identMatchesProperty(ident: unknown, propertyName: string): boolean {
 
 interface SchemaConfig {
   tagName: string
+  assertActive?: () => void
 }
 
 interface ResolvedPropertyRef {
@@ -39,13 +40,27 @@ interface ResolvedPropertyRef {
   writeKey: string
 }
 
-async function resolvePropertyRef(propertyName: string): Promise<ResolvedPropertyRef> {
-  await logseq.Editor.upsertProperty(propertyName, {
-    type: propertyName.toLowerCase().includes('date') ? 'date' : 'url',
-    cardinality: 'one',
-  })
-
-  const managedProperty = await logseq.Editor.getProperty(propertyName)
+async function resolvePropertyRef(
+  propertyName: string,
+  assertActive = () => {}
+): Promise<ResolvedPropertyRef> {
+  let managedProperty = await logseq.Editor.getProperty(propertyName)
+  assertActive()
+  if (!managedProperty) {
+    await logseq.Editor.upsertProperty(propertyName, {
+      type: propertyName === DATE_PROPERTY ? 'date' : 'url',
+      cardinality: 'one',
+    })
+    assertActive()
+    managedProperty = await logseq.Editor.getProperty(propertyName)
+    assertActive()
+  }
+  if (!managedProperty) throw new Error(`Could not resolve ${propertyName} property`)
+  const type = managedProperty.type
+  const expectedType = propertyName === DATE_PROPERTY ? 'date' : 'url'
+  if (type && type !== expectedType && type !== `:${expectedType}`) {
+    throw new Error(`${propertyName} must be a ${expectedType} property`)
+  }
 
   return {
     ident: normalizeIdent(managedProperty?.['ident']) || getPluginPropertyIdent(propertyName),
@@ -63,24 +78,14 @@ export async function ensureManagedPropertyIdents(config?: Partial<SchemaConfig>
   urlWriteKey: string
   dateWriteKey: string
 }> {
-  try {
-    const managedUrlProperty = await resolvePropertyRef(URL_PROPERTY)
-    const managedDateProperty = await resolvePropertyRef(DATE_PROPERTY)
+  const managedUrlProperty = await resolvePropertyRef(URL_PROPERTY, config?.assertActive)
+  const managedDateProperty = await resolvePropertyRef(DATE_PROPERTY, config?.assertActive)
 
-    return {
-      url: managedUrlProperty.ident,
-      date: managedDateProperty.ident,
-      urlWriteKey: managedUrlProperty.writeKey,
-      dateWriteKey: managedDateProperty.writeKey,
-    }
-  } catch (error) {
-    console.error('[Karakeep] Error ensuring managed properties:', error)
-    return {
-      url: getPluginPropertyIdent(URL_PROPERTY),
-      date: getPluginPropertyIdent(DATE_PROPERTY),
-      urlWriteKey: URL_PROPERTY,
-      dateWriteKey: DATE_PROPERTY,
-    }
+  return {
+    url: managedUrlProperty.ident,
+    date: managedDateProperty.ident,
+    urlWriteKey: managedUrlProperty.writeKey,
+    dateWriteKey: managedDateProperty.writeKey,
   }
 }
 
@@ -88,43 +93,40 @@ export async function ensureManagedPropertyIdents(config?: Partial<SchemaConfig>
  * Initialize Bookmarks tag with plugin-owned property schema.
  */
 export async function initializeBookmarksTag(config?: Partial<SchemaConfig>): Promise<void> {
+  const assertActive = config?.assertActive || (() => {})
   try {
+    assertActive()
     const tagName = config?.tagName || BOOKMARKS_TAG
 
     console.log('[Karakeep] ===== INITIALIZING BOOKMARKS TAG SCHEMA =====')
 
     let tag = await logseq.Editor.getTag(tagName)
+    assertActive()
     console.log('[Karakeep] getTag result:', tag)
 
     if (!tag) {
       await logseq.Editor.createTag(tagName)
+      assertActive()
       tag = await logseq.Editor.getTag(tagName)
+      assertActive()
       console.log(`[Karakeep] Created #${tagName} tag:`, tag)
     }
 
     if (!tag) {
-      console.error(`[Karakeep] Failed to create #${tagName} tag`)
-      return
+      throw new Error(`Failed to create #${tagName} tag`)
     }
 
-    const managedUrlProperty = await resolvePropertyRef(URL_PROPERTY)
-    const managedDateProperty = await resolvePropertyRef(DATE_PROPERTY)
-
-    try {
-      await logseq.Editor.addTagProperty(tag.uuid, managedDateProperty.tagRef)
-    } catch (err) {
-      console.log('[Karakeep] Date property already attached or unavailable:', err)
-    }
-
-    try {
-      await logseq.Editor.addTagProperty(tag.uuid, managedUrlProperty.tagRef)
-    } catch (err) {
-      console.log('[Karakeep] URL property already attached or unavailable:', err)
-    }
+    const managedUrlProperty = await resolvePropertyRef(URL_PROPERTY, assertActive)
+    const managedDateProperty = await resolvePropertyRef(DATE_PROPERTY, assertActive)
+    await logseq.Editor.addTagProperty(tag.uuid, managedDateProperty.tagRef)
+    assertActive()
+    await logseq.Editor.addTagProperty(tag.uuid, managedUrlProperty.tagRef)
+    assertActive()
 
     console.log('[Karakeep] ===== TAG SCHEMA INITIALIZATION COMPLETE =====')
   } catch (error) {
     console.error('[Karakeep] Error initializing tag:', error)
+    throw error
   }
 }
 
@@ -132,7 +134,6 @@ export async function initializeBookmarksTag(config?: Partial<SchemaConfig>): Pr
  * Complete schema initialization
  */
 export async function initializeSchema(config?: Partial<SchemaConfig>): Promise<void> {
-  await ensureManagedPropertyIdents(config)
   await initializeBookmarksTag(config)
 }
 

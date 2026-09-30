@@ -96,11 +96,14 @@ export function getSettings(): PluginSettings {
       if (logseq.settings?.syncedIds) {
         try {
           if (typeof logseq.settings.syncedIds === 'string') {
-            syncedIds = JSON.parse(logseq.settings.syncedIds)
+            const parsed: unknown = JSON.parse(logseq.settings.syncedIds)
+            syncedIds = Array.isArray(parsed)
+              ? parsed.filter((id): id is string => typeof id === 'string')
+              : []
           } else if (Array.isArray(logseq.settings.syncedIds)) {
-            syncedIds = logseq.settings.syncedIds
+            syncedIds = logseq.settings.syncedIds.filter((id: unknown) => typeof id === 'string')
           }
-        } catch (e) {
+        } catch {
           syncedIds = []
         }
       }
@@ -145,11 +148,5 @@ export function getSettings(): PluginSettings {
  * Save synced IDs to settings
  */
 export async function saveSyncedIds(ids: string[]): Promise<void> {
-  try {
-    await logseq.updateSettings({
-      syncedIds: JSON.stringify(ids),
-    })
-  } catch (error) {
-    console.error('[Karakeep] Error saving synced IDs:', error)
-  }
+  await logseq.updateSettings({ syncedIds: JSON.stringify(ids) })
 }
