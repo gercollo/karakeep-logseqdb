@@ -36,9 +36,14 @@ for (const failure of ['tag', 'url', 'date', 'journal'] as const) {
     assert.equal(first.failed, 1)
     assert.equal(first.inserted, 0)
     assert.deepEqual(graph.savedIds(), [])
-    assert.equal(graph.blockCount(), 1)
+    assert.equal(graph.blockCount(), failure === 'journal' ? 0 : 1)
+    // All metadata rolls back even when the final operation fails.
+    assert.equal(graph.query(`[:find ?b . :where [?b :block/tags ${TAG_ID}]]`), null)
+    assert.equal(graph.query(`[:find ?b . :where [?b ${URL_IDENT} ?v]]`), null)
+    assert.equal(graph.query(`[:find ?b . :where [?b ${DATE_IDENT} ?v]]`), null)
     const result = await insertBookmarks(blocks, getSettings())
-    assert.equal(result.repaired, 1)
+    assert.equal(result.repaired, failure === 'journal' ? 0 : 1)
+    assert.equal(result.inserted, failure === 'journal' ? 1 : 0)
     assert.equal(result.failed, 0)
     assert.equal(graph.counts.inserts, 1)
     assert.equal(graph.blockCount(), 1)
@@ -63,12 +68,18 @@ test('repairs an untagged old Markdown import in place without touching notes', 
   const uuid = graph.addExisting('one', { tagged: false, url: false, date: false })
   const eid = graph.query('[:find ?b . :in $ ?uuid :where [?b :block/uuid ?uuid]]', uuid)
   graph.transact([
-    { ':db/id': eid, ':user.property/personal-note': 'Keep this note' },
+    { ':db/id': 8000, ':block/title': 'Personal tag' },
+    { ':db/id': eid, ':user.property/personal-note': 'Keep this note', ':block/tags': 8000 },
     { ':db/id': 7000, ':block/parent': eid, ':block/title': 'User child note' },
   ])
   const result = await insertBookmarks([bookmark('one')], getSettings())
   assert.equal(result.repaired, 1)
   assert.equal(graph.counts.inserts, 0)
+  assert.equal(graph.counts.metadataWrites, 1)
+  assert.deepEqual(
+    graph.query('[:find [?t ...] :in $ ?b :where [?b :block/tags ?t]]', eid).sort(),
+    [8000, TAG_ID].sort()
+  )
   assert.equal(
     graph.query('[:find ?v . :in $ ?b :where [?b :user.property/personal-note ?v]]', eid),
     'Keep this note'
@@ -130,7 +141,9 @@ test('aborts remaining writes when the active graph changes during insertion', a
     /Graph changed/
   )
   assert.equal(graph.counts.inserts, 1)
-  assert.equal(graph.counts.urls + graph.counts.dates + graph.counts.checkpoints, 0)
+  assert.equal(graph.counts.urls, 1)
+  assert.equal(graph.counts.dates, 1)
+  assert.equal(graph.counts.checkpoints, 0)
 })
 
 test('stable UUID separates instances and target pages, but ignores trailing URL slashes', async () => {
@@ -157,6 +170,8 @@ test('same-day imports reuse one journal lookup without per-batch settings write
   assert.equal(graph.counts.checkpoints, 1)
   assert.equal(graph.counts.propertyReads, 2)
   assert.equal(graph.counts.propertyCreates, 0)
+  assert.equal(graph.counts.metadataWrites, 100)
+  assert.equal(graph.counts.pageReads, 1)
   assert.ok(progressUpdates <= 4)
 })
 
@@ -190,6 +205,8 @@ test('4,816 completed bookmarks require two queries and zero per-bookmark RPCs',
     propertyReads: 2,
     propertyCreates: 0,
     inserts: 0,
+    metadataWrites: 0,
+    pageReads: 0,
     tags: 0,
     urls: 0,
     dates: 0,
@@ -197,6 +214,66 @@ test('4,816 completed bookmarks require two queries and zero per-bookmark RPCs',
     journalCreates: 0,
     checkpoints: 0,
   })
+})
+
+test('appends after the last direct child, including untagged notes and arbitrary order', async () => {
+  const graph = testGraph()
+  const tail = graph.addExisting('tail', { tagged: false, order: 'b0' })
+  graph.addExisting('earlier', { order: 'a9' })
+  graph.transact([{ ':db/id': 9000, ':block/title': 'Other page' }])
+  graph.addExisting('elsewhere', { parent: 9000, order: 'z0' })
+  const result = await insertBookmarks([bookmark('new')], getSettings())
+  assert.equal(result.inserted, 1)
+  assert.deepEqual(graph.insertionTargets, [tail])
+  assert.equal(graph.counts.pageReads, 0)
+  assert.equal(graph.counts.metadataWrites, 1)
+})
+
+test('advances the insertion anchor after each block without rereading the page', async () => {
+  const graph = testGraph()
+  const blocks = [bookmark('one'), bookmark('two'), bookmark('three')]
+  const result = await insertBookmarks(blocks, getSettings())
+  assert.equal(result.inserted, 3)
+  assert.deepEqual(graph.insertionTargets, [
+    TAG_UUID,
+    await bookmarkUUID(TAG_UUID, 'https://karakeep.test', 'one'),
+    await bookmarkUUID(TAG_UUID, 'https://karakeep.test', 'two'),
+  ])
+  assert.equal(graph.counts.pageReads, 1)
+  assert.equal(graph.counts.metadataWrites, 3)
+})
+
+test('advances the anchor after creation even if that bookmark metadata fails', async () => {
+  const graph = testGraph({ failure: 'date' })
+  const result = await insertBookmarks([bookmark('one'), bookmark('two')], getSettings())
+  assert.equal(result.failed, 1)
+  assert.equal(result.inserted, 1)
+  assert.deepEqual(graph.insertionTargets, [
+    TAG_UUID,
+    await bookmarkUUID(TAG_UUID, 'https://karakeep.test', 'one'),
+  ])
+  assert.equal(graph.counts.pageReads, 1)
+  const retry = await insertBookmarks([bookmark('one'), bookmark('two')], getSettings())
+  assert.equal(retry.repaired, 1)
+  assert.equal(retry.skipped, 1)
+  assert.equal(graph.blockCount(), 2)
+})
+
+test('metadata updates preserve the normalized title returned by block creation', async () => {
+  const graph = testGraph()
+  const original = graph.mock.Editor.insertBlock
+  const title = '[[69886723-4c64-4b10-be3c-9c79867c7a5f]] https://example.test/one'
+  graph.mock.Editor.insertBlock = (target, _content, opts) => original(target, title, opts)
+  const result = await insertBookmarks([bookmark('one')], getSettings())
+  assert.equal(result.inserted, 1)
+  const uuid = await bookmarkUUID(TAG_UUID, 'https://karakeep.test', 'one')
+  assert.equal(
+    graph.query(
+      '[:find ?t . :in $ ?uuid :where [?b :block/uuid ?uuid] [?b :block/title ?t]]',
+      uuid
+    ),
+    title
+  )
 })
 
 test('complete imports store the actual journal reference and managed URL entity', async () => {

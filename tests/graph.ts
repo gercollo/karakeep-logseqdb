@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module'
-import { sdkQuery } from './sdk'
+import { sdkQuery, sdkUpdate } from './sdk'
 import { DEFAULT_SETTINGS, getPluginPropertyIdent, type BookmarkBlock } from '../src/types'
 
 const ds = createRequire(import.meta.url)('datascript')
@@ -57,6 +57,8 @@ export function testGraph(
     propertyReads: 0,
     propertyCreates: 0,
     inserts: 0,
+    metadataWrites: 0,
+    pageReads: 0,
     tags: 0,
     urls: 0,
     dates: 0,
@@ -70,6 +72,7 @@ export function testGraph(
     karakeepInstanceUrl: 'https://karakeep.test',
     syncedIds: JSON.stringify(options.syncedIds || []),
   }
+  const insertionTargets: string[] = []
   let failed = false
   function transact(tx: unknown[]) {
     db = ds.db_with(db, tx)
@@ -114,6 +117,7 @@ export function testGraph(
       uuid?: string
       legacyUrl?: boolean
       parent?: number
+      order?: string
     } = {}
   ) {
     const block = bookmark(id)
@@ -128,6 +132,7 @@ export function testGraph(
         ':block/uuid': uuid,
         ':block/title': options.title || block.content,
         ':block/parent': options.parent || TAG_ID,
+        ':block/order': options.order || String(blockId).padStart(12, '0'),
         ...(options.tagged !== false ? { ':block/tags': TAG_ID } : {}),
         ...(options.url !== false ? { [URL_IDENT]: valueId } : {}),
         ...(options.date !== false ? { [DATE_IDENT]: dateId } : {}),
@@ -176,8 +181,19 @@ export function testGraph(
         opts: { customUUID: string; end: boolean; sibling: boolean }
       ) => {
         counts.inserts++
-        if (page !== TAG_UUID || !opts.end || opts.sibling)
-          throw new Error('Incorrect insertion target')
+        insertionTargets.push(page)
+        if (page === TAG_UUID) {
+          counts.pageReads++
+          if (!opts.end || opts.sibling) throw new Error('Incorrect page insertion target')
+        } else {
+          const anchor = eid(page)
+          if (
+            !opts.sibling ||
+            ds.q(queryForJS('[:find ?p . :in $ ?b :where [?b :block/parent ?p]]'), db, anchor) !==
+              TAG_ID
+          )
+            throw new Error('Incorrect sibling insertion target')
+        }
         if (options.failure === 'insert-null' && !failed) {
           failed = true
           return null
@@ -198,10 +214,46 @@ export function testGraph(
             ':block/uuid': opts.customUUID,
             ':block/title': content,
             ':block/parent': TAG_ID,
+            ':block/order': String(blockId).padStart(12, '0'),
           },
         ])
-        return { id: blockId, uuid: opts.customUUID }
+        return { id: blockId, uuid: opts.customUUID, title: content }
       },
+      updateBlock: sdkUpdate(async (uuid, content, opts) => {
+        counts.metadataWrites++
+        const id = eid(uuid)
+        const title = ds.q(queryForJS('[:find ?t . :in $ ?b :where [?b :block/title ?t]]'), db, id)
+        if (content !== title) throw new Error('Metadata update must preserve the original title')
+        const tx: unknown[] = []
+        let tagged = false
+        for (const [key, value] of Object.entries(opts.properties)) {
+          if (key === 'block/tags') {
+            counts.tags++
+            fail('tag')
+            if (!Array.isArray(value) || value.length !== 1 || value[0] !== TAG_ID)
+              throw new Error('Incorrect tag reference')
+            tx.push([':db/add', id, ':block/tags', TAG_ID])
+            tagged = true
+          } else if (key === URL_IDENT.slice(1)) {
+            counts.urls++
+            fail('url')
+            const valueId = nextId++
+            tx.push({ ':db/id': valueId, ':block/title': value }, [
+              ':db/add',
+              id,
+              URL_IDENT,
+              valueId,
+            ])
+          } else if (key === DATE_IDENT.slice(1)) {
+            counts.dates++
+            fail('date')
+            tx.push([':db/add', id, DATE_IDENT, value])
+          } else throw new Error(`Unexpected metadata property ${key}`)
+        }
+        // The native set-block-properties transaction commits all operations together.
+        transact(tx)
+        if (tagged) options.afterTag?.()
+      }),
       addBlockTag: async (uuid: string, tagUuid: string) => {
         counts.tags++
         fail('tag')
@@ -247,12 +299,14 @@ export function testGraph(
   return {
     mock,
     counts,
+    insertionTargets,
     settings,
     addExisting,
     addJournal,
     transact,
     query: (query: string, ...inputs: unknown[]) => ds.q(queryForJS(query), db, ...inputs),
-    blockCount: () => ds.q(queryForJS('[:find (count ?b) . :where [?b :block/parent 74499]]'), db),
+    blockCount: () =>
+      ds.q(queryForJS('[:find (count ?b) . :where [?b :block/parent 74499]]'), db) || 0,
     savedIds: () => JSON.parse(settings.syncedIds) as string[],
   }
 }
